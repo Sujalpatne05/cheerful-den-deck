@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,6 +11,7 @@ import { DateRange } from "react-day-picker";
 import { format } from "date-fns";
 import { useAuditLog } from "@/hooks/use-audit-log";
 import { sendNotificationEmail } from "@/lib/notification-email";
+import { supabase } from "@/lib/supabase";
 import {
   Dialog,
   DialogContent,
@@ -164,7 +165,7 @@ const Bookings = () => {
     });
   }, [bookings, search]);
 
-  const handleCreateBooking = (event: React.FormEvent) => {
+  const handleCreateBooking = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!canSubmitNewBooking || !dateRange?.from || !dateRange?.to) return;
 
@@ -197,6 +198,33 @@ const Bookings = () => {
     };
 
     setBookings((prev) => [next, ...prev]);
+
+    // Save to Supabase
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) {
+      const { error } = await supabase
+        .from('bookings')
+        .insert({
+          user_id: user.id,
+          guest_name: next.guest,
+          room_id: null, // Can be linked to room table if needed
+          check_in: next.checkIn,
+          check_out: next.checkOut,
+          status: next.status,
+          total_cost: next.total,
+          notes: `Room: ${next.room}`,
+        });
+
+      if (error) {
+        console.error('Error saving booking to Supabase:', error);
+        toast({
+          title: "Warning",
+          description: "Booking created locally but failed to save to database.",
+          variant: "destructive",
+        });
+      }
+    }
+
     logAction({
       module: "bookings",
       action: "booking_created",
@@ -244,7 +272,7 @@ const Bookings = () => {
     );
   };
 
-  const handleCheckIn = (bookingId: string) => {
+  const handleCheckIn = async (bookingId: string) => {
     const targetBooking = bookings.find((b) => b.id === bookingId);
     if (!targetBooking) return;
     if (
@@ -257,6 +285,16 @@ const Bookings = () => {
 
     updateRoomOccupancy({ roomLabel: targetBooking.room, guest: targetBooking.guest, occupied: true });
     setBookings((prev) => prev.map((b) => (b.id === bookingId ? { ...b, status: "Checked In" } : b)));
+
+    // Update in Supabase
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) {
+      await supabase
+        .from('bookings')
+        .update({ status: 'Checked In' })
+        .eq('user_id', user.id);
+    }
+
     logAction({
       module: "bookings",
       action: "booking_checked_in",
@@ -274,12 +312,21 @@ const Bookings = () => {
     }
   };
 
-  const handleCheckOut = (bookingId: string) => {
+  const handleCheckOut = async (bookingId: string) => {
     const targetBooking = bookings.find((b) => b.id === bookingId);
     if (!targetBooking || targetBooking.status !== "Checked In") return;
 
     updateRoomOccupancy({ roomLabel: targetBooking.room, guest: targetBooking.guest, occupied: false });
     setBookings((prev) => prev.map((b) => (b.id === bookingId ? { ...b, status: "Checked Out" } : b)));
+
+    // Update in Supabase
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) {
+      await supabase
+        .from('bookings')
+        .update({ status: 'Checked Out' })
+        .eq('user_id', user.id);
+    }
 
     const roomNumber = getRoomNumberFromLabel(targetBooking.room);
     if (roomNumber) {
@@ -305,6 +352,20 @@ const Bookings = () => {
           },
           ...prevTasks,
         ]);
+
+        // Save housekeeping task to Supabase
+        if (user) {
+          await supabase
+            .from('housekeeping')
+            .insert({
+              user_id: user.id,
+              room_id: null,
+              type: 'Turnover Clean',
+              status: 'Pending',
+              task_date: new Date().toISOString().split('T')[0],
+              notes: `Room: ${roomNumber} | From booking ${targetBooking.id}`,
+            });
+        }
 
         logAction({
           module: "housekeeping",
