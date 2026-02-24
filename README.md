@@ -71,3 +71,41 @@ Yes, you can!
 To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
 
 Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+
+## Payment Gateway Setup (Razorpay + Supabase Edge Functions)
+
+This project includes Razorpay integration for invoice payments.
+
+### 1) Frontend env
+
+Set these in your `.env`:
+
+```env
+VITE_SUPABASE_URL=...
+VITE_SUPABASE_ANON_KEY=...
+VITE_SUPABASE_FUNCTIONS_URL=https://<project-ref>.supabase.co/functions/v1
+VITE_RAZORPAY_KEY_ID=rzp_test_xxxxx
+```
+
+If `VITE_SUPABASE_FUNCTIONS_URL` is omitted, the app infers it as `${VITE_SUPABASE_URL}/functions/v1`.
+
+### 2) Edge function secrets
+
+Set secrets in Supabase:
+
+```sh
+supabase secrets set RAZORPAY_KEY_ID=rzp_test_xxxxx
+supabase secrets set RAZORPAY_KEY_SECRET=xxxxxxxx
+```
+
+### 3) Deploy functions
+
+```sh
+supabase functions deploy create-razorpay-order
+supabase functions deploy verify-razorpay-payment
+```
+
+### 4) Billing behavior
+
+- If Razorpay config is present, the **Pay Online** button opens Razorpay Checkout and verifies signature server-side.
+- If Razorpay config is missing, billing falls back to **Pay UPI** deeplink using UPI VPA from settings.

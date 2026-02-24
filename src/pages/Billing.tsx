@@ -5,6 +5,9 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { useAppState } from "@/hooks/use-app-state";
 import { formatINR } from "@/lib/currency";
+import { toast } from "@/components/ui/use-toast";
+import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/lib/supabase";
 import {
   Dialog,
   DialogContent,
@@ -70,6 +73,37 @@ type PaymentSettings = {
   };
 };
 
+type RazorpaySuccessResponse = {
+  razorpay_order_id: string;
+  razorpay_payment_id: string;
+  razorpay_signature: string;
+};
+
+type RazorpayInstance = {
+  open: () => void;
+};
+
+type RazorpayConstructorOptions = {
+  key: string;
+  amount: number;
+  currency: string;
+  name: string;
+  description: string;
+  order_id: string;
+  notes?: Record<string, string>;
+  prefill?: { name?: string; email?: string };
+  handler: (response: RazorpaySuccessResponse) => void;
+  modal?: { ondismiss?: () => void };
+};
+
+type RazorpayConstructor = new (options: RazorpayConstructorOptions) => RazorpayInstance;
+
+declare global {
+  interface Window {
+    Razorpay?: RazorpayConstructor;
+  }
+}
+
 function buildUpiPaymentLink(params: { vpa: string; name: string; amount: number; note: string }) {
   const am = params.amount.toFixed(2);
   return (
@@ -85,7 +119,9 @@ function buildUpiPaymentLink(params: { vpa: string; name: string; amount: number
 const Billing = () => {
   const [invoices, setInvoices] = useAppState<Invoice[]>("rm_invoices", initialInvoices);
   const [settings] = useAppState<PaymentSettings>("rm_settings", {});
+  const { user } = useAuth();
   const [addOpen, setAddOpen] = useState(false);
+  const [payingInvoiceId, setPayingInvoiceId] = useState<string | null>(null);
   const [newInvoice, setNewInvoice] = useState<{
     guest: string;
     taxableAmount: string;
@@ -107,6 +143,169 @@ const Billing = () => {
     Number.isFinite(Number(newInvoice.gstRate)) &&
     Number(newInvoice.gstRate) >= 0 &&
     newInvoice.date.length > 0;
+
+  const razorpayKeyId = import.meta.env.VITE_RAZORPAY_KEY_ID as string | undefined;
+  const configuredFunctionsUrl = import.meta.env.VITE_SUPABASE_FUNCTIONS_URL as string | undefined;
+  const inferredFunctionsUrl =
+    import.meta.env.VITE_SUPABASE_URL && typeof import.meta.env.VITE_SUPABASE_URL === "string"
+      ? `${import.meta.env.VITE_SUPABASE_URL}/functions/v1`
+      : undefined;
+  const functionsBaseUrl = configuredFunctionsUrl || inferredFunctionsUrl;
+  const isGatewayConfigured = Boolean(razorpayKeyId && functionsBaseUrl);
+
+  const ensureRazorpayScript = async () => {
+    if (window.Razorpay) return;
+
+    await new Promise<void>((resolve, reject) => {
+      const existingScript = document.querySelector('script[src="https://checkout.razorpay.com/v1/checkout.js"]');
+      if (existingScript) {
+        existingScript.addEventListener("load", () => resolve(), { once: true });
+        existingScript.addEventListener("error", () => reject(new Error("Unable to load Razorpay checkout.")), { once: true });
+        return;
+      }
+
+      const script = document.createElement("script");
+      script.src = "https://checkout.razorpay.com/v1/checkout.js";
+      script.async = true;
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error("Unable to load Razorpay checkout."));
+      document.body.appendChild(script);
+    });
+  };
+
+  const getAuthHeaders = async () => {
+    if (!supabase) {
+      return { "Content-Type": "application/json" };
+    }
+
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    return {
+      "Content-Type": "application/json",
+      ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+    };
+  };
+
+  const updateInvoiceStatus = (invoiceId: string, status: InvoiceStatus) => {
+    setInvoices((prev) => prev.map((inv) => (inv.id === invoiceId ? { ...inv, status } : inv)));
+  };
+
+  const handleGatewayPayment = async (invoice: Invoice) => {
+    if (!razorpayKeyId || !functionsBaseUrl) {
+      toast({ title: "Gateway not configured", description: "Razorpay key or function URL is missing.", variant: "destructive" });
+      return;
+    }
+
+    setPayingInvoiceId(invoice.id);
+
+    try {
+      await ensureRazorpayScript();
+      if (!window.Razorpay) {
+        throw new Error("Razorpay checkout is unavailable.");
+      }
+
+      const orderRes = await fetch(`${functionsBaseUrl}/create-razorpay-order`, {
+        method: "POST",
+        headers: await getAuthHeaders(),
+        body: JSON.stringify({
+          amount: invoice.amount,
+          currency: "INR",
+          receipt: invoice.id,
+          notes: {
+            invoiceId: invoice.id,
+            guest: invoice.guest,
+          },
+        }),
+      });
+
+      if (!orderRes.ok) {
+        const message = await orderRes.text();
+        throw new Error(message || "Unable to create payment order.");
+      }
+
+      const orderData = (await orderRes.json()) as {
+        orderId: string;
+        amountPaise: number;
+        currency: string;
+      };
+
+      await new Promise<void>((resolve, reject) => {
+        const checkout = new window.Razorpay!({
+          key: razorpayKeyId,
+          amount: orderData.amountPaise,
+          currency: orderData.currency,
+          name: settings.payments?.merchantName?.trim() || "Hotel",
+          description: `Invoice ${invoice.id}`,
+          order_id: orderData.orderId,
+          notes: {
+            invoiceId: invoice.id,
+          },
+          prefill: {
+            name: invoice.guest,
+            email: user?.email,
+          },
+          handler: async (paymentResponse) => {
+            try {
+              const verifyRes = await fetch(`${functionsBaseUrl}/verify-razorpay-payment`, {
+                method: "POST",
+                headers: await getAuthHeaders(),
+                body: JSON.stringify({
+                  invoiceId: invoice.id,
+                  amount: invoice.amount,
+                  ...paymentResponse,
+                }),
+              });
+
+              if (!verifyRes.ok) {
+                const message = await verifyRes.text();
+                throw new Error(message || "Payment verification failed.");
+              }
+
+              updateInvoiceStatus(invoice.id, "Paid");
+              toast({
+                title: "Payment successful",
+                description: `Invoice ${invoice.id} has been marked as paid.`,
+              });
+              resolve();
+            } catch (error) {
+              reject(error instanceof Error ? error : new Error("Payment verification failed."));
+            }
+          },
+          modal: {
+            ondismiss: () => reject(new Error("Payment cancelled.")),
+          },
+        });
+
+        checkout.open();
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Payment failed. Please try again.";
+      toast({ title: "Payment failed", description: message, variant: "destructive" });
+    } finally {
+      setPayingInvoiceId(null);
+    }
+  };
+
+  const handleUpiDeepLink = (invoice: Invoice) => {
+    const vpa = settings.payments?.upiVpa?.trim();
+    if (!vpa) {
+      toast({
+        title: "UPI VPA missing",
+        description: "Add UPI VPA in Settings to use direct UPI payment link.",
+        variant: "destructive",
+      });
+      return;
+    }
+    const link = buildUpiPaymentLink({
+      vpa,
+      name: settings.payments?.merchantName?.trim() || "Hotel",
+      amount: invoice.amount,
+      note: `${invoice.id} - ${invoice.guest}`,
+    });
+    window.open(link, "_blank", "noopener,noreferrer");
+  };
 
   const summary = useMemo(() => {
     let paidTotal = 0;
@@ -398,20 +597,16 @@ const Billing = () => {
                       <Button
                         variant="outline"
                         size="sm"
-                        disabled={!settings.payments?.upiVpa || inv.status === "Paid"}
+                        disabled={inv.status === "Paid" || payingInvoiceId === inv.id}
                         onClick={() => {
-                          const vpa = settings.payments?.upiVpa?.trim();
-                          if (!vpa) return;
-                          const link = buildUpiPaymentLink({
-                            vpa,
-                            name: settings.payments?.merchantName?.trim() || "Hotel",
-                            amount: inv.amount,
-                            note: `${inv.id} - ${inv.guest}`,
-                          });
-                          window.open(link, "_blank", "noopener,noreferrer");
+                          if (isGatewayConfigured) {
+                            void handleGatewayPayment(inv);
+                            return;
+                          }
+                          handleUpiDeepLink(inv);
                         }}
                       >
-                        Pay
+                        {payingInvoiceId === inv.id ? "Processing..." : isGatewayConfigured ? "Pay Online" : "Pay UPI"}
                       </Button>
                       <Button
                         variant="ghost"
