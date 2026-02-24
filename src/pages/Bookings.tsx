@@ -10,6 +10,7 @@ import { DateRangePicker } from "@/components/ui/date-range-picker";
 import { DateRange } from "react-day-picker";
 import { format } from "date-fns";
 import { useAuditLog } from "@/hooks/use-audit-log";
+import { sendNotificationEmail } from "@/lib/notification-email";
 import {
   Dialog,
   DialogContent,
@@ -54,6 +55,18 @@ type Booking = {
   checkOut: string; // YYYY-MM-DD
   total: number; // USD
   status: BookingStatus;
+};
+
+type NotificationSettings = {
+  property?: {
+    name?: string;
+    email?: string;
+  };
+  notifications?: {
+    newBookings?: boolean;
+    checkInReminders?: boolean;
+    housekeepingUpdates?: boolean;
+  };
 };
 
 const initialBookings: Booking[] = [
@@ -114,6 +127,7 @@ const Bookings = () => {
   const [bookings, setBookings] = useAppState<Booking[]>("rm_bookings", initialBookings);
   const [rooms, setRooms] = useAppState<RoomRecord[]>("rm_rooms", []);
   const [housekeepingTasks, setHousekeepingTasks] = useAppState<HousekeepingTask[]>("rm_housekeeping_tasks", []);
+  const [settings] = useAppState<NotificationSettings>("rm_settings", {});
   const { logAction } = useAuditLog();
   const [search, setSearch] = useState("");
   const [addOpen, setAddOpen] = useState(false);
@@ -192,6 +206,18 @@ const Bookings = () => {
       title: "Booking created",
       description: `Booking ${next.id} for ${next.guest} has been created successfully.`,
     });
+
+    if (settings.notifications?.newBookings && settings.property?.email) {
+      void sendNotificationEmail({
+        to: settings.property.email,
+        subject: `New booking created: ${next.id}`,
+        text:
+          `A new booking was created.\n\n` +
+          `Booking: ${next.id}\nGuest: ${next.guest}\nRoom: ${next.room}\n` +
+          `Check-in: ${next.checkIn}\nCheck-out: ${next.checkOut}\nAmount: ${formatINR(next.total)}`,
+      });
+    }
+
     setAddOpen(false);
     setDateRange(undefined);
     setNewBooking({
@@ -236,6 +262,16 @@ const Bookings = () => {
       action: "booking_checked_in",
       details: `${targetBooking.id} checked in for room ${targetBooking.room}.`,
     });
+
+    if (settings.notifications?.checkInReminders && settings.property?.email) {
+      void sendNotificationEmail({
+        to: settings.property.email,
+        subject: `Guest checked in: ${targetBooking.id}`,
+        text:
+          `Check-in update\n\n` +
+          `Booking: ${targetBooking.id}\nGuest: ${targetBooking.guest}\nRoom: ${targetBooking.room}\nStatus: Checked In`,
+      });
+    }
   };
 
   const handleCheckOut = (bookingId: string) => {
@@ -280,6 +316,16 @@ const Bookings = () => {
           title: "Housekeeping task created",
           description: `Turnover clean task added for Room ${roomNumber}.`,
         });
+
+        if (settings.notifications?.housekeepingUpdates && settings.property?.email) {
+          void sendNotificationEmail({
+            to: settings.property.email,
+            subject: `Housekeeping task created for Room ${roomNumber}`,
+            text:
+              `A turnover clean task was auto-created.\n\n` +
+              `Room: ${roomNumber}\nSource booking: ${targetBooking.id}\nTask: Turnover Clean\nPriority: High`,
+          });
+        }
       }
     }
 

@@ -103,9 +103,22 @@ supabase secrets set RAZORPAY_KEY_SECRET=xxxxxxxx
 ```sh
 supabase functions deploy create-razorpay-order
 supabase functions deploy verify-razorpay-payment
+supabase functions deploy send-notification-email
 ```
+
+### 3.1) Email notification secrets (Resend)
+
+Set email provider secrets in Supabase:
+
+```sh
+supabase secrets set RESEND_API_KEY=re_xxxxx
+supabase secrets set NOTIFY_FROM_EMAIL="Hotel Notifications <onboarding@resend.dev>"
+```
+
+`NOTIFY_FROM_EMAIL` is optional; if omitted, a default Resend onboarding sender is used.
 
 ### 4) Billing behavior
 
 - If Razorpay config is present, the **Pay Online** button opens Razorpay Checkout and verifies signature server-side.
 - If Razorpay config is missing, billing falls back to **Pay UPI** deeplink using UPI VPA from settings.
+- Booking and billing events can send notification emails to the property email configured in settings, based on notification toggles.

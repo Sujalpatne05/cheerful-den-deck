@@ -8,6 +8,7 @@ import { formatINR } from "@/lib/currency";
 import { toast } from "@/components/ui/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
+import { sendNotificationEmail } from "@/lib/notification-email";
 import {
   Dialog,
   DialogContent,
@@ -67,6 +68,13 @@ function formatDate(dateString: string) {
 }
 
 type PaymentSettings = {
+  property?: {
+    name?: string;
+    email?: string;
+  };
+  notifications?: {
+    paymentAlerts?: boolean;
+  };
   payments?: {
     merchantName?: string;
     upiVpa?: string;
@@ -268,6 +276,17 @@ const Billing = () => {
                 title: "Payment successful",
                 description: `Invoice ${invoice.id} has been marked as paid.`,
               });
+
+              if (settings.notifications?.paymentAlerts && settings.property?.email) {
+                void sendNotificationEmail({
+                  to: settings.property.email,
+                  subject: `Payment received: ${invoice.id}`,
+                  text:
+                    `Payment received successfully.\n\n` +
+                    `Invoice: ${invoice.id}\nGuest: ${invoice.guest}\nAmount: ${formatINR(invoice.amount)}\nStatus: Paid`,
+                });
+              }
+
               resolve();
             } catch (error) {
               reject(error instanceof Error ? error : new Error("Payment verification failed."));
@@ -361,6 +380,17 @@ const Billing = () => {
     };
 
     setInvoices((prev) => [next, ...prev]);
+
+    if (settings.notifications?.paymentAlerts && settings.property?.email) {
+      void sendNotificationEmail({
+        to: settings.property.email,
+        subject: `Invoice created: ${next.id}`,
+        text:
+          `A new invoice was created.\n\n` +
+          `Invoice: ${next.id}\nGuest: ${next.guest}\nAmount: ${formatINR(next.amount)}\nStatus: ${next.status}`,
+      });
+    }
+
     setAddOpen(false);
     setNewInvoice({ guest: "", taxableAmount: "", gstRate: "0", date: "", status: "Pending" });
   };
