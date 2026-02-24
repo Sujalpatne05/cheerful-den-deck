@@ -1,6 +1,7 @@
 import { NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { canAccessRoute, roleLabelMap } from "@/lib/access";
+import { cn } from "@/lib/utils";
 import {
   LayoutDashboard,
   BedDouble,
@@ -26,7 +27,12 @@ const navItems = [
   { label: "Settings", icon: Settings, path: "/settings" },
 ];
 
-const AppSidebar = () => {
+type AppSidebarProps = {
+  mobile?: boolean;
+  onNavigate?: () => void;
+};
+
+const AppSidebar = ({ mobile = false, onNavigate }: AppSidebarProps) => {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
   const visibleNavItems = navItems.filter((item) => canAccessRoute(user?.role, item.path));
@@ -36,7 +42,12 @@ const AppSidebar = () => {
     navigate("/login");
   };
   return (
-    <aside className="fixed left-0 top-0 z-40 flex h-screen w-64 flex-col bg-sidebar-bg">
+    <aside
+      className={cn(
+        "flex w-64 flex-col bg-sidebar-bg",
+        mobile ? "h-full" : "fixed left-0 top-0 z-40 h-screen",
+      )}
+    >
       {/* Header */}
       <div className="flex items-center gap-3 px-6 py-6">
         <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary text-primary-foreground">
@@ -55,6 +66,7 @@ const AppSidebar = () => {
             key={item.path}
             to={item.path}
             end={item.path === "/"}
+            onClick={onNavigate}
             className={({ isActive }) =>
               [
                 "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
