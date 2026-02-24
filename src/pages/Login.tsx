@@ -4,6 +4,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { BedDouble, Eye, EyeOff } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { isSupabaseConfigured } from "@/lib/supabase";
 
 const Login = () => {
   const [email, setEmail] = useState("");
@@ -13,14 +14,14 @@ const Login = () => {
   const { login } = useAuth();
   const navigate = useNavigate();
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     if (!email || !password) {
       setError("Please enter both email and password");
       return;
     }
-    const success = login(email, password);
+    const success = await login(email, password);
     if (success) {
       navigate("/");
     } else {
@@ -84,7 +85,9 @@ const Login = () => {
           </Button>
 
           <p className="text-center text-xs text-muted-foreground">
-            Demo: use any email & password to sign in
+            {isSupabaseConfigured
+              ? "Use a Supabase email/password user to sign in"
+              : "Demo: use any email & password to sign in"}
           </p>
         </form>
       </div>

@@ -1,80 +1,436 @@
+import { useMemo, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { DollarSign, Download, FileText, Plus } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { useAppState } from "@/hooks/use-app-state";
+import { formatINR } from "@/lib/currency";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { DollarSign, Download, Plus } from "lucide-react";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 
-const invoices = [
-  { id: "INV-001", guest: "Sarah Johnson", amount: "$1,750", date: "Jul 25, 2024", status: "Paid" },
-  { id: "INV-002", guest: "Mike Chen", amount: "$360", date: "Jul 23, 2024", status: "Paid" },
-  { id: "INV-003", guest: "Emily Davis", amount: "$2,100", date: "Jul 28, 2024", status: "Pending" },
-  { id: "INV-004", guest: "James Wilson", amount: "$240", date: "Jul 22, 2024", status: "Paid" },
-  { id: "INV-005", guest: "Anna Martinez", amount: "$540", date: "Jul 26, 2024", status: "Overdue" },
-  { id: "INV-006", guest: "Robert Brown", amount: "$720", date: "Jul 27, 2024", status: "Pending" },
+type InvoiceStatus = "Paid" | "Pending" | "Overdue";
+
+type Invoice = {
+  id: string;
+  guest: string;
+  taxableAmount: number;
+  gstRate: number;
+  gstAmount: number;
+  amount: number; // total
+  date: string; // YYYY-MM-DD
+  status: InvoiceStatus;
+};
+
+const initialInvoices: Invoice[] = [
+  { id: "INV-001", guest: "Sarah Johnson", taxableAmount: 1750, gstRate: 0, gstAmount: 0, amount: 1750, date: "2024-07-25", status: "Paid" },
+  { id: "INV-002", guest: "Mike Chen", taxableAmount: 360, gstRate: 0, gstAmount: 0, amount: 360, date: "2024-07-23", status: "Paid" },
+  { id: "INV-003", guest: "Emily Davis", taxableAmount: 2100, gstRate: 0, gstAmount: 0, amount: 2100, date: "2024-07-28", status: "Pending" },
+  { id: "INV-004", guest: "James Wilson", taxableAmount: 240, gstRate: 0, gstAmount: 0, amount: 240, date: "2024-07-22", status: "Paid" },
+  { id: "INV-005", guest: "Anna Martinez", taxableAmount: 540, gstRate: 0, gstAmount: 0, amount: 540, date: "2024-07-26", status: "Overdue" },
+  { id: "INV-006", guest: "Robert Brown", taxableAmount: 720, gstRate: 0, gstAmount: 0, amount: 720, date: "2024-07-27", status: "Pending" },
 ];
 
-const statusColors: Record<string, string> = {
+const statusColors: Record<InvoiceStatus, string> = {
   Paid: "bg-success/10 text-success border-success/20",
   Pending: "bg-warning/10 text-warning border-warning/20",
   Overdue: "bg-destructive/10 text-destructive border-destructive/20",
 };
 
-const Billing = () => (
-  <div className="space-y-6">
-    <div className="flex items-center justify-between">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">Billing</h1>
-        <p className="text-sm text-muted-foreground">Invoices and payment tracking</p>
+function formatInvoiceId(numberValue: number) {
+  return `INV-${String(numberValue).padStart(3, "0")}`;
+}
+
+function formatDate(dateString: string) {
+  const date = new Date(dateString);
+  if (Number.isNaN(date.getTime())) return dateString;
+  return date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "2-digit" });
+}
+
+type PaymentSettings = {
+  payments?: {
+    merchantName?: string;
+    upiVpa?: string;
+  };
+};
+
+function buildUpiPaymentLink(params: { vpa: string; name: string; amount: number; note: string }) {
+  const am = params.amount.toFixed(2);
+  return (
+    "upi://pay" +
+    `?pa=${encodeURIComponent(params.vpa)}` +
+    `&pn=${encodeURIComponent(params.name)}` +
+    `&am=${encodeURIComponent(am)}` +
+    "&cu=INR" +
+    `&tn=${encodeURIComponent(params.note)}`
+  );
+}
+
+const Billing = () => {
+  const [invoices, setInvoices] = useAppState<Invoice[]>("rm_invoices", initialInvoices);
+  const [settings] = useAppState<PaymentSettings>("rm_settings", {});
+  const [addOpen, setAddOpen] = useState(false);
+  const [newInvoice, setNewInvoice] = useState<{
+    guest: string;
+    taxableAmount: string;
+    gstRate: string;
+    date: string;
+    status: InvoiceStatus;
+  }>({
+    guest: "",
+    taxableAmount: "",
+    gstRate: "0",
+    date: "",
+    status: "Pending",
+  });
+
+  const canSubmitNewInvoice =
+    newInvoice.guest.trim().length > 0 &&
+    Number.isFinite(Number(newInvoice.taxableAmount)) &&
+    Number(newInvoice.taxableAmount) >= 0 &&
+    Number.isFinite(Number(newInvoice.gstRate)) &&
+    Number(newInvoice.gstRate) >= 0 &&
+    newInvoice.date.length > 0;
+
+  const summary = useMemo(() => {
+    let paidTotal = 0;
+    let pendingTotal = 0;
+    let overdueTotal = 0;
+    let pendingCount = 0;
+    let overdueCount = 0;
+
+    for (const inv of invoices) {
+      if (inv.status === "Paid") {
+        paidTotal += inv.amount;
+      } else if (inv.status === "Pending") {
+        pendingTotal += inv.amount;
+        pendingCount += 1;
+      } else if (inv.status === "Overdue") {
+        overdueTotal += inv.amount;
+        overdueCount += 1;
+      }
+    }
+
+    return {
+      paidTotal,
+      pendingTotal,
+      overdueTotal,
+      pendingCount,
+      overdueCount,
+    };
+  }, [invoices]);
+
+  const handleCreateInvoice = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!canSubmitNewInvoice) return;
+
+    const maxExisting = invoices
+      .map((inv) => Number(inv.id.replace(/^INV-?/i, "")))
+      .filter((n) => Number.isFinite(n))
+      .reduce((max, n) => Math.max(max, n), 0);
+
+    const taxableAmount = Number(newInvoice.taxableAmount);
+    const gstRate = Number(newInvoice.gstRate);
+    const gstAmount = Math.round((taxableAmount * gstRate) / 100);
+    const totalAmount = taxableAmount + gstAmount;
+
+    const next: Invoice = {
+      id: formatInvoiceId(maxExisting + 1),
+      guest: newInvoice.guest.trim(),
+      taxableAmount,
+      gstRate,
+      gstAmount,
+      amount: totalAmount,
+      date: newInvoice.date,
+      status: newInvoice.status,
+    };
+
+    setInvoices((prev) => [next, ...prev]);
+    setAddOpen(false);
+    setNewInvoice({ guest: "", taxableAmount: "", gstRate: "0", date: "", status: "Pending" });
+  };
+
+  const handleDownloadInvoice = (invoice: Invoice) => {
+    const doc = new jsPDF();
+    const merchantName = settings.payments?.merchantName?.trim() || "Hotel";
+
+    doc.setFontSize(16);
+    doc.text("Invoice", 14, 18);
+    doc.setFontSize(10);
+    doc.text(`Merchant: ${merchantName}`, 14, 26);
+    doc.text(`Invoice ID: ${invoice.id}`, 14, 32);
+    doc.text(`Guest: ${invoice.guest}`, 14, 38);
+    doc.text(`Date: ${formatDate(invoice.date)}`, 14, 44);
+    doc.text(`Status: ${invoice.status}`, 14, 50);
+
+    autoTable(doc, {
+      startY: 58,
+      head: [["Item", "Amount"]],
+      body: [
+        ["Taxable Amount", formatINR(invoice.taxableAmount)],
+        [`GST (${invoice.gstRate}%)`, formatINR(invoice.gstAmount)],
+        ["Total", formatINR(invoice.amount)],
+      ],
+      styles: { fontSize: 10 },
+      headStyles: { fillColor: [30, 64, 175] },
+    });
+
+    doc.save(`${invoice.id}.pdf`);
+  };
+
+  const handleExportAllInvoices = () => {
+    const doc = new jsPDF();
+    const merchantName = settings.payments?.merchantName?.trim() || "Hotel";
+
+    doc.setFontSize(16);
+    doc.text("Invoices Report", 14, 18);
+    doc.setFontSize(10);
+    doc.text(`Merchant: ${merchantName}`, 14, 26);
+    doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 32);
+
+    autoTable(doc, {
+      startY: 40,
+      head: [["Invoice", "Guest", "Taxable", "GST %", "GST", "Total", "Date", "Status"]],
+      body: invoices.map((inv) => [
+        inv.id,
+        inv.guest,
+        formatINR(inv.taxableAmount),
+        String(inv.gstRate),
+        formatINR(inv.gstAmount),
+        formatINR(inv.amount),
+        formatDate(inv.date),
+        inv.status,
+      ]),
+      styles: { fontSize: 9 },
+      headStyles: { fillColor: [30, 64, 175] },
+    });
+
+    doc.save("invoices.pdf");
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-foreground">Billing</h1>
+          <p className="text-sm text-muted-foreground">Invoices and payment tracking</p>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <Button variant="outline" className="gap-2" onClick={handleExportAllInvoices}>
+            <Download className="h-4 w-4" /> Export PDF
+          </Button>
+          <Dialog open={addOpen} onOpenChange={setAddOpen}>
+            <DialogTrigger asChild>
+              <Button className="gap-2">
+                <Plus className="h-4 w-4" /> Create Invoice
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-lg">
+              <DialogHeader>
+                <DialogTitle>Create Invoice</DialogTitle>
+              </DialogHeader>
+
+              <form onSubmit={handleCreateInvoice} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="invoice-guest">Guest</Label>
+                <Input
+                  id="invoice-guest"
+                  placeholder="Guest name"
+                  value={newInvoice.guest}
+                  onChange={(e) => setNewInvoice((prev) => ({ ...prev, guest: e.target.value }))}
+                />
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="invoice-taxable">Taxable Amount</Label>
+                  <Input
+                    id="invoice-taxable"
+                    inputMode="decimal"
+                    placeholder="e.g. 540"
+                    value={newInvoice.taxableAmount}
+                    onChange={(e) => setNewInvoice((prev) => ({ ...prev, taxableAmount: e.target.value }))}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="invoice-date">Date</Label>
+                  <Input
+                    id="invoice-date"
+                    type="date"
+                    value={newInvoice.date}
+                    onChange={(e) => setNewInvoice((prev) => ({ ...prev, date: e.target.value }))}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="invoice-gst">GST %</Label>
+                  <Input
+                    id="invoice-gst"
+                    inputMode="decimal"
+                    placeholder="e.g. 12"
+                    value={newInvoice.gstRate}
+                    onChange={(e) => setNewInvoice((prev) => ({ ...prev, gstRate: e.target.value }))}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="invoice-total">Total (auto)</Label>
+                  <Input
+                    id="invoice-total"
+                    readOnly
+                    value={(() => {
+                      const taxable = Number(newInvoice.taxableAmount);
+                      const gstRate = Number(newInvoice.gstRate);
+                      if (!Number.isFinite(taxable) || !Number.isFinite(gstRate)) return "";
+                      const gst = Math.round((taxable * gstRate) / 100);
+                      return formatINR(taxable + gst);
+                    })()}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Status</Label>
+                <Select
+                  value={newInvoice.status}
+                  onValueChange={(value) => setNewInvoice((prev) => ({ ...prev, status: value as InvoiceStatus }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Paid">Paid</SelectItem>
+                    <SelectItem value="Pending">Pending</SelectItem>
+                    <SelectItem value="Overdue">Overdue</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setAddOpen(false)}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={!canSubmitNewInvoice}>
+                  Create Invoice
+                </Button>
+              </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
+        </div>
       </div>
-      <Button className="gap-2"><Plus className="h-4 w-4" /> Create Invoice</Button>
-    </div>
 
-    <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
-      {[
-        { label: "Total Revenue", value: "$48,290", sub: "This month" },
-        { label: "Pending", value: "$2,820", sub: "3 invoices" },
-        { label: "Overdue", value: "$540", sub: "1 invoice" },
-      ].map((s) => (
-        <Card key={s.label} className="border-none shadow-sm">
-          <CardContent className="p-5">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 mb-3">
-              <DollarSign className="h-5 w-5 text-primary" />
-            </div>
-            <p className="text-2xl font-bold text-foreground">{s.value}</p>
-            <p className="text-sm text-muted-foreground">{s.label} · {s.sub}</p>
-          </CardContent>
-        </Card>
-      ))}
-    </div>
+      <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
+        {[
+          { label: "Total Revenue", value: formatINR(summary.paidTotal), sub: "Paid" },
+          {
+            label: "Pending",
+            value: formatINR(summary.pendingTotal),
+            sub: `${summary.pendingCount} invoice${summary.pendingCount === 1 ? "" : "s"}`,
+          },
+          {
+            label: "Overdue",
+            value: formatINR(summary.overdueTotal),
+            sub: `${summary.overdueCount} invoice${summary.overdueCount === 1 ? "" : "s"}`,
+          },
+        ].map((s) => (
+          <Card key={s.label} className="border-none shadow-sm">
+            <CardContent className="p-5">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 mb-3">
+                <DollarSign className="h-5 w-5 text-primary" />
+              </div>
+              <p className="text-2xl font-bold text-foreground">{s.value}</p>
+              <p className="text-sm text-muted-foreground">
+                {s.label} · {s.sub}
+              </p>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
 
-    <Card className="border-none shadow-sm">
-      <CardContent className="p-0">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b text-left text-muted-foreground">
-              <th className="px-5 py-3 font-medium">Invoice</th>
-              <th className="px-5 py-3 font-medium">Guest</th>
-              <th className="px-5 py-3 font-medium">Amount</th>
-              <th className="px-5 py-3 font-medium">Date</th>
-              <th className="px-5 py-3 font-medium">Status</th>
-              <th className="px-5 py-3 font-medium"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {invoices.map((inv) => (
-              <tr key={inv.id} className="border-b last:border-0 hover:bg-muted/50 transition-colors">
-                <td className="px-5 py-3 font-medium text-primary">{inv.id}</td>
-                <td className="px-5 py-3 text-foreground">{inv.guest}</td>
-                <td className="px-5 py-3 font-medium text-foreground">{inv.amount}</td>
-                <td className="px-5 py-3 text-muted-foreground">{inv.date}</td>
-                <td className="px-5 py-3"><Badge variant="outline" className={statusColors[inv.status]}>{inv.status}</Badge></td>
-                <td className="px-5 py-3"><Button variant="ghost" size="sm"><Download className="h-4 w-4" /></Button></td>
+      <Card className="border-none shadow-sm">
+        <CardContent className="p-0">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b text-left text-muted-foreground">
+                <th className="px-5 py-3 font-medium">Invoice</th>
+                <th className="px-5 py-3 font-medium">Guest</th>
+                <th className="px-5 py-3 font-medium">Amount</th>
+                <th className="px-5 py-3 font-medium">Date</th>
+                <th className="px-5 py-3 font-medium">Status</th>
+                <th className="px-5 py-3 font-medium"></th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </CardContent>
-    </Card>
-  </div>
-);
+            </thead>
+            <tbody>
+              {invoices.map((inv) => (
+                <tr key={inv.id} className="border-b last:border-0 hover:bg-muted/50 transition-colors">
+                  <td className="px-5 py-3 font-medium text-primary">{inv.id}</td>
+                  <td className="px-5 py-3 text-foreground">{inv.guest}</td>
+                  <td className="px-5 py-3 font-medium text-foreground">{formatINR(inv.amount)}</td>
+                  <td className="px-5 py-3 text-muted-foreground">{formatDate(inv.date)}</td>
+                  <td className="px-5 py-3">
+                    <Badge variant="outline" className={statusColors[inv.status]}>
+                      {inv.status}
+                    </Badge>
+                  </td>
+                  <td className="px-5 py-3">
+                    <div className="flex items-center justify-end gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={!settings.payments?.upiVpa || inv.status === "Paid"}
+                        onClick={() => {
+                          const vpa = settings.payments?.upiVpa?.trim();
+                          if (!vpa) return;
+                          const link = buildUpiPaymentLink({
+                            vpa,
+                            name: settings.payments?.merchantName?.trim() || "Hotel",
+                            amount: inv.amount,
+                            note: `${inv.id} - ${inv.guest}`,
+                          });
+                          window.open(link, "_blank", "noopener,noreferrer");
+                        }}
+                      >
+                        Pay
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        aria-label={`Download ${inv.id}`}
+                        onClick={() => handleDownloadInvoice(inv)}
+                      >
+                        <Download className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </CardContent>
+      </Card>
+    </div>
+  );
+};
 
 export default Billing;

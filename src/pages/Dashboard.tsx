@@ -7,7 +7,11 @@ import {
   TrendingDown,
   ArrowUpRight,
 } from "lucide-react";
+import { Link } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { useAuth } from "@/contexts/AuthContext";
+import { formatINR } from "@/lib/currency";
 import {
   BarChart,
   Bar,
@@ -25,7 +29,7 @@ const stats = [
   { label: "Total Rooms", value: "120", icon: BedDouble, change: "+2", trend: "up" },
   { label: "Active Bookings", value: "87", icon: CalendarCheck, change: "+12%", trend: "up" },
   { label: "Guests Today", value: "156", icon: Users, change: "+8", trend: "up" },
-  { label: "Revenue (MTD)", value: "$48,290", icon: DollarSign, change: "+18%", trend: "up" },
+  { label: "Revenue (MTD)", value: formatINR(48290), icon: DollarSign, change: "+18%", trend: "up" },
 ];
 
 const revenueData = [
@@ -39,10 +43,10 @@ const revenueData = [
 ];
 
 const roomStatusData = [
-  { name: "Occupied", value: 72, color: "hsl(217, 91%, 60%)" },
-  { name: "Available", value: 35, color: "hsl(142, 71%, 45%)" },
-  { name: "Maintenance", value: 8, color: "hsl(38, 92%, 50%)" },
-  { name: "Cleaning", value: 5, color: "hsl(199, 89%, 48%)" },
+  { name: "Occupied", value: 72, color: "hsl(var(--primary))" },
+  { name: "Available", value: 35, color: "hsl(var(--success))" },
+  { name: "Maintenance", value: 8, color: "hsl(var(--warning))" },
+  { name: "Cleaning", value: 5, color: "hsl(var(--info))" },
 ];
 
 const recentBookings = [
@@ -60,11 +64,13 @@ const statusColors: Record<string, string> = {
 };
 
 const Dashboard = () => {
+  const { user } = useAuth();
+
   return (
     <div className="space-y-8">
       <div>
         <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
-        <p className="text-sm text-muted-foreground">Welcome back, Lodge Admin</p>
+        <p className="text-sm text-muted-foreground">Welcome back, {user?.name || "Guest"}</p>
       </div>
 
       {/* Stats */}
@@ -99,18 +105,25 @@ const Dashboard = () => {
           <CardContent>
             <ResponsiveContainer width="100%" height={280}>
               <BarChart data={revenueData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 13%, 91%)" />
-                <XAxis dataKey="month" tick={{ fontSize: 12 }} stroke="hsl(220, 9%, 46%)" />
-                <YAxis tick={{ fontSize: 12 }} stroke="hsl(220, 9%, 46%)" />
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                <XAxis dataKey="month" tick={{ fontSize: 12 }} stroke="hsl(var(--muted-foreground))" />
+                <YAxis tick={{ fontSize: 12 }} stroke="hsl(var(--muted-foreground))" />
                 <Tooltip
                   contentStyle={{
-                    borderRadius: "8px",
-                    border: "none",
-                    boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+                    borderRadius: "12px",
+                    backgroundColor: "hsl(var(--popover))",
+                    color: "hsl(var(--popover-foreground))",
+                    border: "1px solid hsl(var(--border))",
                   }}
-                  formatter={(value: number) => [`$${value.toLocaleString()}`, "Revenue"]}
+                  formatter={(value) => {
+                    const numericValue = typeof value === "number" ? value : Number(value);
+                    if (Number.isFinite(numericValue)) {
+                      return [formatINR(numericValue), "Revenue"];
+                    }
+                    return [String(value), "Revenue"];
+                  }}
                 />
-                <Bar dataKey="revenue" fill="hsl(217, 91%, 60%)" radius={[6, 6, 0, 0]} />
+                <Bar dataKey="revenue" fill="hsl(var(--primary))" radius={[6, 6, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </CardContent>
@@ -157,9 +170,11 @@ const Dashboard = () => {
         <CardHeader className="pb-2">
           <div className="flex items-center justify-between">
             <CardTitle className="text-base font-semibold">Recent Bookings</CardTitle>
-            <button className="flex items-center gap-1 text-xs font-medium text-primary hover:underline">
-              View all <ArrowUpRight className="h-3 w-3" />
-            </button>
+            <Button asChild variant="link" size="sm" className="h-auto p-0 text-xs">
+              <Link to="/bookings" className="flex items-center gap-1">
+                View all <ArrowUpRight className="h-3 w-3" />
+              </Link>
+            </Button>
           </div>
         </CardHeader>
         <CardContent>

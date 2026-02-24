@@ -1,10 +1,28 @@
-import React, { createContext, useContext, useState, useCallback } from "react";
+import React, { createContext, useContext, useEffect, useMemo, useState, useCallback } from "react";
+import { isSupabaseConfigured, supabase } from "@/lib/supabase";
+
+export type AppRole = "admin" | "manager" | "frontdesk" | "housekeeping" | "accountant";
+
+const normalizeRole = (value: unknown): AppRole => {
+  const roleValue = typeof value === "string" ? value.trim().toLowerCase() : "";
+  switch (roleValue) {
+    case "admin":
+    case "manager":
+    case "frontdesk":
+    case "housekeeping":
+    case "accountant":
+      return roleValue;
+    default:
+      return "admin";
+  }
+};
 
 interface AuthContextType {
   isAuthenticated: boolean;
-  user: { name: string; role: string } | null;
-  login: (email: string, password: string) => boolean;
-  logout: () => void;
+  authUserId: string | null;
+  user: { name: string; role: AppRole; email?: string } | null;
+  login: (email: string, password: string) => Promise<boolean>;
+  logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType>({} as AuthContextType);
@@ -12,36 +30,105 @@ const AuthContext = createContext<AuthContextType>({} as AuthContextType);
 export const useAuth = () => useContext(AuthContext);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const useSupabase = useMemo(() => isSupabaseConfigured && Boolean(supabase), []);
+
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
-    return localStorage.getItem("rm_auth") === "true";
+    return useSupabase ? false : localStorage.getItem("rm_auth") === "true";
   });
-  const [user, setUser] = useState<{ name: string; role: string } | null>(() => {
+  const [authUserId, setAuthUserId] = useState<string | null>(null);
+  const [user, setUser] = useState<{ name: string; role: AppRole; email?: string } | null>(() => {
+    if (useSupabase) return null;
     const saved = localStorage.getItem("rm_user");
-    return saved ? JSON.parse(saved) : null;
+    if (!saved) return null;
+    const parsed = JSON.parse(saved) as { name?: string; role?: string; email?: string };
+    return {
+      name: parsed.name || "User",
+      role: normalizeRole(parsed.role),
+      email: parsed.email,
+    };
   });
 
-  const login = useCallback((email: string, password: string) => {
-    // Frontend-only mock login
-    if (email && password) {
-      const userData = { name: email.split("@")[0], role: "Admin" };
-      setIsAuthenticated(true);
-      setUser(userData);
-      localStorage.setItem("rm_auth", "true");
-      localStorage.setItem("rm_user", JSON.stringify(userData));
-      return true;
-    }
-    return false;
-  }, []);
+  useEffect(() => {
+    if (!useSupabase) return;
 
-  const logout = useCallback(() => {
+    let mounted = true;
+
+    supabase!.auth.getSession().then(({ data }) => {
+      if (!mounted) return;
+      const session = data.session;
+      setIsAuthenticated(Boolean(session));
+      setAuthUserId(session?.user?.id ?? null);
+      setUser(
+        session?.user
+          ? {
+              name:
+                (typeof session.user.user_metadata?.full_name === "string" && session.user.user_metadata.full_name) ||
+                session.user.email?.split("@")[0] ||
+                "User",
+              role: normalizeRole(session.user.user_metadata?.role),
+              email: session.user.email ?? undefined,
+            }
+          : null,
+      );
+    });
+
+    const { data: subscription } = supabase!.auth.onAuthStateChange((_event, session) => {
+      setIsAuthenticated(Boolean(session));
+      setAuthUserId(session?.user?.id ?? null);
+      setUser(
+        session?.user
+          ? {
+              name:
+                (typeof session.user.user_metadata?.full_name === "string" && session.user.user_metadata.full_name) ||
+                session.user.email?.split("@")[0] ||
+                "User",
+              role: normalizeRole(session.user.user_metadata?.role),
+              email: session.user.email ?? undefined,
+            }
+          : null,
+      );
+    });
+
+    return () => {
+      mounted = false;
+      subscription.subscription.unsubscribe();
+    };
+  }, [useSupabase]);
+
+  const login = useCallback(
+    async (email: string, password: string) => {
+      if (useSupabase) {
+        const { error } = await supabase!.auth.signInWithPassword({ email, password });
+        return !error;
+      }
+
+      // Frontend-only mock login (fallback)
+      if (email && password) {
+        const userData = { name: email.split("@")[0], role: "admin" as AppRole, email };
+        setIsAuthenticated(true);
+        setUser(userData);
+        localStorage.setItem("rm_auth", "true");
+        localStorage.setItem("rm_user", JSON.stringify(userData));
+        return true;
+      }
+      return false;
+    },
+    [useSupabase],
+  );
+
+  const logout = useCallback(async () => {
+    if (useSupabase) {
+      await supabase!.auth.signOut();
+      return;
+    }
     setIsAuthenticated(false);
     setUser(null);
     localStorage.removeItem("rm_auth");
     localStorage.removeItem("rm_user");
-  }, []);
+  }, [useSupabase]);
 
   return (
-    <AuthContext.Provider value={{ isAuthenticated, user, login, logout }}>
+    <AuthContext.Provider value={{ isAuthenticated, authUserId, user, login, logout }}>
       {children}
     </AuthContext.Provider>
   );

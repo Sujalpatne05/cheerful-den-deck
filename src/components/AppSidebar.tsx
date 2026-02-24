@@ -1,5 +1,6 @@
-import { NavLink, useLocation, useNavigate } from "react-router-dom";
+import { NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
+import { canAccessRoute, roleLabelMap } from "@/lib/access";
 import {
   LayoutDashboard,
   BedDouble,
@@ -26,12 +27,12 @@ const navItems = [
 ];
 
 const AppSidebar = () => {
-  const location = useLocation();
   const navigate = useNavigate();
   const { user, logout } = useAuth();
+  const visibleNavItems = navItems.filter((item) => canAccessRoute(user?.role, item.path));
 
-  const handleLogout = () => {
-    logout();
+  const handleLogout = async () => {
+    await logout();
     navigate("/login");
   };
   return (
@@ -49,23 +50,24 @@ const AppSidebar = () => {
 
       {/* Nav */}
       <nav className="flex-1 space-y-1 px-3 py-2">
-        {navItems.map((item) => {
-          const isActive = location.pathname === item.path;
-          return (
-            <NavLink
-              key={item.path}
-              to={item.path}
-              className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
+        {visibleNavItems.map((item) => (
+          <NavLink
+            key={item.path}
+            to={item.path}
+            end={item.path === "/"}
+            className={({ isActive }) =>
+              [
+                "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
                 isActive
                   ? "bg-primary text-primary-foreground"
-                  : "text-sidebar-fg hover:bg-sidebar-hover hover:text-sidebar-header"
-              }`}
-            >
-              <item.icon className="h-5 w-5" />
-              {item.label}
-            </NavLink>
-          );
-        })}
+                  : "text-sidebar-fg hover:bg-sidebar-hover hover:text-sidebar-header",
+              ].join(" ")
+            }
+          >
+            <item.icon className="h-5 w-5" />
+            {item.label}
+          </NavLink>
+        ))}
       </nav>
 
       {/* User */}
@@ -76,7 +78,7 @@ const AppSidebar = () => {
           </div>
           <div className="flex-1">
             <p className="text-sm font-medium text-sidebar-header">{user?.name || "Guest"}</p>
-            <p className="text-xs text-sidebar-fg">{user?.role || "User"}</p>
+            <p className="text-xs text-sidebar-fg">{(user?.role && roleLabelMap[user.role]) || "User"}</p>
           </div>
           <button onClick={handleLogout} className="text-sidebar-fg hover:text-sidebar-header transition-colors">
             <LogOut className="h-4 w-4" />
