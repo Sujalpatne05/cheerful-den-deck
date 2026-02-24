@@ -1,4 +1,5 @@
-import { NavLink, useLocation } from "react-router-dom";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
+import { useAuth } from "@/contexts/AuthContext";
 import {
   LayoutDashboard,
   BedDouble,
@@ -26,7 +27,13 @@ const navItems = [
 
 const AppSidebar = () => {
   const location = useLocation();
+  const navigate = useNavigate();
+  const { user, logout } = useAuth();
 
+  const handleLogout = () => {
+    logout();
+    navigate("/login");
+  };
   return (
     <aside className="fixed left-0 top-0 z-40 flex h-screen w-64 flex-col bg-sidebar-bg">
       {/* Header */}
@@ -35,7 +42,7 @@ const AppSidebar = () => {
           <CalendarCheck className="h-5 w-5" />
         </div>
         <div>
-          <h1 className="text-sm font-semibold text-sidebar-header">LodgeOS</h1>
+          <h1 className="text-sm font-semibold text-sidebar-header">Room Management</h1>
           <p className="text-xs text-sidebar-fg">Management Suite</p>
         </div>
       </div>
@@ -65,13 +72,13 @@ const AppSidebar = () => {
       <div className="border-t border-sidebar-border px-4 py-4">
         <div className="flex items-center gap-3">
           <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/20 text-xs font-semibold text-primary">
-            LA
+            {user?.name?.slice(0, 2).toUpperCase() || "RM"}
           </div>
           <div className="flex-1">
-            <p className="text-sm font-medium text-sidebar-header">Lodge Admin</p>
-            <p className="text-xs text-sidebar-fg">Admin</p>
+            <p className="text-sm font-medium text-sidebar-header">{user?.name || "Guest"}</p>
+            <p className="text-xs text-sidebar-fg">{user?.role || "User"}</p>
           </div>
-          <button className="text-sidebar-fg hover:text-sidebar-header transition-colors">
+          <button onClick={handleLogout} className="text-sidebar-fg hover:text-sidebar-header transition-colors">
             <LogOut className="h-4 w-4" />
           </button>
         </div>
