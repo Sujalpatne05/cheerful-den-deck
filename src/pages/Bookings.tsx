@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -50,6 +50,7 @@ type HousekeepingTask = {
 
 type Booking = {
   id: string;
+  dbId?: string;
   guest: string;
   room: string;
   checkIn: string; // YYYY-MM-DD
@@ -187,8 +188,42 @@ const Bookings = () => {
       .filter((n) => Number.isFinite(n))
       .reduce((max, n) => Math.max(max, n), 0);
 
+    const bookingRef = formatBookingId(maxExisting + 1);
+    let dbId: string | undefined;
+
+    // Save to Supabase
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) {
+      const { data, error } = await supabase
+        .from('bookings')
+        .insert({
+          user_id: user.id,
+          guest_name: newBooking.guest.trim(),
+          room_id: null, // Can be linked to room table if needed
+          check_in: checkInDate,
+          check_out: checkOutDate,
+          status: newBooking.status,
+          total_cost: Number(newBooking.total),
+          notes: `booking_ref:${bookingRef}; room:${newBooking.room.trim()}`,
+        })
+        .select("id")
+        .single();
+
+      if (error) {
+        console.error('Error saving booking to Supabase:', error);
+        toast({
+          title: "Warning",
+          description: "Booking created locally but failed to save to database.",
+          variant: "destructive",
+        });
+      } else {
+        dbId = data.id;
+      }
+    }
+
     const next: Booking = {
-      id: formatBookingId(maxExisting + 1),
+      id: bookingRef,
+      dbId,
       guest: newBooking.guest.trim(),
       room: newBooking.room.trim(),
       checkIn: checkInDate,
@@ -198,32 +233,6 @@ const Bookings = () => {
     };
 
     setBookings((prev) => [next, ...prev]);
-
-    // Save to Supabase
-    const { data: { user } } = await supabase.auth.getUser();
-    if (user) {
-      const { error } = await supabase
-        .from('bookings')
-        .insert({
-          user_id: user.id,
-          guest_name: next.guest,
-          room_id: null, // Can be linked to room table if needed
-          check_in: next.checkIn,
-          check_out: next.checkOut,
-          status: next.status,
-          total_cost: next.total,
-          notes: `Room: ${next.room}`,
-        });
-
-      if (error) {
-        console.error('Error saving booking to Supabase:', error);
-        toast({
-          title: "Warning",
-          description: "Booking created locally but failed to save to database.",
-          variant: "destructive",
-        });
-      }
-    }
 
     logAction({
       module: "bookings",
@@ -289,10 +298,21 @@ const Bookings = () => {
     // Update in Supabase
     const { data: { user } } = await supabase.auth.getUser();
     if (user) {
-      await supabase
+      let query = supabase
         .from('bookings')
         .update({ status: 'Checked In' })
         .eq('user_id', user.id);
+
+      if (targetBooking.dbId) {
+        query = query.eq('id', targetBooking.dbId);
+      } else {
+        query = query
+          .eq('guest_name', targetBooking.guest)
+          .eq('check_in', targetBooking.checkIn)
+          .eq('check_out', targetBooking.checkOut);
+      }
+
+      await query;
     }
 
     logAction({
@@ -322,10 +342,21 @@ const Bookings = () => {
     // Update in Supabase
     const { data: { user } } = await supabase.auth.getUser();
     if (user) {
-      await supabase
+      let query = supabase
         .from('bookings')
         .update({ status: 'Checked Out' })
         .eq('user_id', user.id);
+
+      if (targetBooking.dbId) {
+        query = query.eq('id', targetBooking.dbId);
+      } else {
+        query = query
+          .eq('guest_name', targetBooking.guest)
+          .eq('check_in', targetBooking.checkIn)
+          .eq('check_out', targetBooking.checkOut);
+      }
+
+      await query;
     }
 
     const roomNumber = getRoomNumberFromLabel(targetBooking.room);
