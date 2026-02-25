@@ -11,7 +11,7 @@ import { DateRange } from "react-day-picker";
 import { format } from "date-fns";
 import { useAuditLog } from "@/hooks/use-audit-log";
 import { sendNotificationEmail } from "@/lib/notification-email";
-import { supabase } from "@/lib/supabase";
+import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 import {
   Dialog,
   DialogContent,
@@ -189,41 +189,58 @@ const Bookings = () => {
       .reduce((max, n) => Math.max(max, n), 0);
 
     const bookingRef = formatBookingId(maxExisting + 1);
-    let dbId: string | undefined;
 
-    // Save to Supabase
-    const { data: { user } } = await supabase.auth.getUser();
-    if (user) {
-      const { data, error } = await supabase
-        .from('bookings')
-        .insert({
-          user_id: user.id,
-          guest_name: newBooking.guest.trim(),
-          room_id: null, // Can be linked to room table if needed
-          check_in: checkInDate,
-          check_out: checkOutDate,
-          status: newBooking.status,
-          total_cost: Number(newBooking.total),
-          notes: `booking_ref:${bookingRef}; room:${newBooking.room.trim()}`,
-        })
-        .select("id")
-        .single();
+    if (!isSupabaseConfigured || !supabase) {
+      toast({
+        title: "Supabase not configured",
+        description: "Database connection is not configured. Please set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.",
+        variant: "destructive",
+      });
+      return;
+    }
 
-      if (error) {
-        console.error('Error saving booking to Supabase:', error);
-        toast({
-          title: "Warning",
-          description: "Booking created locally but failed to save to database.",
-          variant: "destructive",
-        });
-      } else {
-        dbId = data.id;
-      }
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      toast({
+        title: "Session required",
+        description: "Please log in again before creating bookings.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from('bookings')
+      .insert({
+        user_id: user.id,
+        guest_name: newBooking.guest.trim(),
+        room_id: null,
+        check_in: checkInDate,
+        check_out: checkOutDate,
+        status: newBooking.status,
+        total_cost: Number(newBooking.total),
+        notes: `booking_ref:${bookingRef}; room:${newBooking.room.trim()}`,
+      })
+      .select("id")
+      .single();
+
+    if (error) {
+      console.error("Error saving booking to Supabase:", error);
+      toast({
+        title: "Booking save failed",
+        description: error.message || "Could not save booking to database.",
+        variant: "destructive",
+      });
+      return;
     }
 
     const next: Booking = {
       id: bookingRef,
-      dbId,
+      dbId: data.id,
       guest: newBooking.guest.trim(),
       room: newBooking.room.trim(),
       checkIn: checkInDate,
