@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -59,6 +59,17 @@ type Booking = {
   status: BookingStatus;
 };
 
+type BookingRow = {
+  id: string;
+  guest_name: string;
+  check_in: string;
+  check_out: string;
+  status: BookingStatus;
+  total_cost: number | null;
+  notes: string | null;
+  created_at: string;
+};
+
 type NotificationSettings = {
   property?: {
     name?: string;
@@ -97,6 +108,20 @@ function getRoomNumberFromLabel(roomLabel: string) {
 
 function formatBookingId(numberValue: number) {
   return `BK${String(numberValue).padStart(3, "0")}`;
+}
+
+function parseBookingRef(notes: string | null, dbId: string): string {
+  if (notes) {
+    const refMatch = notes.match(/booking_ref\s*:\s*([^;]+)/i);
+    if (refMatch?.[1]) return refMatch[1].trim();
+  }
+  return `BK-${dbId.slice(0, 8).toUpperCase()}`;
+}
+
+function parseRoom(notes: string | null): string {
+  if (!notes) return "-";
+  const roomMatch = notes.match(/room\s*:\s*([^;]+)/i);
+  return roomMatch?.[1]?.trim() || "-";
 }
 
 // Check if two date ranges overlap
@@ -165,6 +190,50 @@ const Bookings = () => {
       );
     });
   }, [bookings, search]);
+
+  useEffect(() => {
+    if (!isSupabaseConfigured || !supabase) return;
+
+    let cancelled = false;
+
+    (async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) return;
+
+      const { data, error } = await supabase
+        .from("bookings")
+        .select("id,guest_name,check_in,check_out,status,total_cost,notes,created_at")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        console.error("Failed to load bookings from Supabase:", error);
+        return;
+      }
+
+      if (cancelled) return;
+
+      const mapped = ((data as BookingRow[] | null) || []).map((row) => ({
+        id: parseBookingRef(row.notes, row.id),
+        dbId: row.id,
+        guest: row.guest_name,
+        room: parseRoom(row.notes),
+        checkIn: row.check_in,
+        checkOut: row.check_out,
+        total: row.total_cost ?? 0,
+        status: row.status,
+      }));
+
+      setBookings(mapped);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [setBookings]);
 
   const handleCreateBooking = async (event: React.FormEvent) => {
     event.preventDefault();
