@@ -3,15 +3,13 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { useAppState } from "@/hooks/use-app-state";
 import { formatINR } from "@/lib/currency";
 import { toast } from "@/components/ui/use-toast";
 import { DateRangePicker } from "@/components/ui/date-range-picker";
-import { DateRange } from "react-day-picker";
+import { DateRange } from "react-day-fns";
 import { format } from "date-fns";
 import { useAuditLog } from "@/hooks/use-audit-log";
-import { sendNotificationEmail } from "@/lib/notification-email";
-import { isSupabaseConfigured, supabase } from "@/lib/supabase";
+import api from "@/lib/api";
 import {
   Dialog,
   DialogContent,
@@ -151,10 +149,10 @@ function hasBookingConflict(
 }
 
 const Bookings = () => {
-  const [bookings, setBookings] = useAppState<Booking[]>("rm_bookings", initialBookings);
-  const [rooms, setRooms] = useAppState<RoomRecord[]>("rm_rooms", []);
-  const [housekeepingTasks, setHousekeepingTasks] = useAppState<HousekeepingTask[]>("rm_housekeeping_tasks", []);
-  const [settings] = useAppState<NotificationSettings>("rm_settings", {});
+  const [bookings, setBookings] = useState<Booking[]>([]);
+  const [rooms, setRooms] = useState<RoomRecord[]>([]);
+  const [housekeepingTasks, setHousekeepingTasks] = useState<HousekeepingTask[]>([]);
+  const [settings] = useState<NotificationSettings>({});
   const { logAction } = useAuditLog();
   const [search, setSearch] = useState("");
   const [addOpen, setAddOpen] = useState(false);
@@ -192,48 +190,37 @@ const Bookings = () => {
   }, [bookings, search]);
 
   useEffect(() => {
-    if (!isSupabaseConfigured || !supabase) return;
-
-    let cancelled = false;
-
-    (async () => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) return;
-
-      const { data, error } = await supabase
-        .from("bookings")
-        .select("id,guest_name,check_in,check_out,status,total_cost,notes,created_at")
-        .eq("user_id", user.id)
-        .order("created_at", { ascending: false });
-
-      if (error) {
-        console.error("Failed to load bookings from Supabase:", error);
-        return;
+    const fetchBookings = async () => {
+      try {
+        const { bookings: data } = await api.getBookings();
+        const mapped = (data || []).map((booking: any) => ({
+          id: booking.booking_ref,
+          dbId: booking.id,
+          guest: booking.guest_name,
+          room: booking.notes ? parseRoom(booking.notes) : '-',
+          checkIn: booking.check_in,
+          checkOut: booking.check_out,
+          total: booking.total_cost ?? 0,
+          status: booking.status,
+        }));
+        setBookings(mapped);
+      } catch (error) {
+        console.error('Failed to load bookings:', error);
       }
-
-      if (cancelled) return;
-
-      const mapped = ((data as BookingRow[] | null) || []).map((row) => ({
-        id: parseBookingRef(row.notes, row.id),
-        dbId: row.id,
-        guest: row.guest_name,
-        room: parseRoom(row.notes),
-        checkIn: row.check_in,
-        checkOut: row.check_out,
-        total: row.total_cost ?? 0,
-        status: row.status,
-      }));
-
-      setBookings(mapped);
-    })();
-
-    return () => {
-      cancelled = true;
     };
-  }, [setBookings]);
+
+    const fetchRooms = async () => {
+      try {
+        const { rooms: data } = await api.getRooms();
+        setRooms(data || []);
+      } catch (error) {
+        console.error('Failed to load rooms:', error);
+      }
+    };
+
+    fetchBookings();
+    fetchRooms();
+  }, []);
 
   const handleCreateBooking = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -259,96 +246,61 @@ const Bookings = () => {
 
     const bookingRef = formatBookingId(maxExisting + 1);
 
-    if (!isSupabaseConfigured || !supabase) {
-      toast({
-        title: "Supabase not configured",
-        description: "Database connection is not configured. Please set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    const {
-      data: { user },
-      error: userError,
-    } = await supabase.auth.getUser();
-
-    if (userError || !user) {
-      toast({
-        title: "Session required",
-        description: "Please log in again before creating bookings.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    const { data, error } = await supabase
-      .from('bookings')
-      .insert({
-        user_id: user.id,
+    try {
+      const bookingData = {
+        booking_ref: bookingRef,
         guest_name: newBooking.guest.trim(),
-        room_id: null,
+        guest_email: null,
+        guest_phone: null,
         check_in: checkInDate,
         check_out: checkOutDate,
         status: newBooking.status,
         total_cost: Number(newBooking.total),
-        notes: `booking_ref:${bookingRef}; room:${newBooking.room.trim()}`,
-      })
-      .select("id")
-      .single();
+        notes: `room:${newBooking.room.trim()}`,
+        room_ids: [], // You can add room IDs if needed
+      };
 
-    if (error) {
-      console.error("Error saving booking to Supabase:", error);
+      const { booking } = await api.createBooking(bookingData);
+
+      const next: Booking = {
+        id: bookingRef,
+        dbId: booking.id,
+        guest: newBooking.guest.trim(),
+        room: newBooking.room.trim(),
+        checkIn: checkInDate,
+        checkOut: checkOutDate,
+        total: Number(newBooking.total),
+        status: newBooking.status,
+      };
+
+      setBookings((prev) => [next, ...prev]);
+
+      logAction({
+        module: "bookings",
+        action: "booking_created",
+        details: `${next.id} for ${next.guest} in ${next.room} from ${next.checkIn} to ${next.checkOut}.`,
+      });
+      
       toast({
-        title: "Booking save failed",
-        description: error.message || "Could not save booking to database.",
+        title: "Booking created",
+        description: `Booking ${next.id} for ${next.guest} has been created successfully.`,
+      });
+
+      setAddOpen(false);
+      setDateRange(undefined);
+      setNewBooking({
+        guest: "",
+        room: "",
+        total: "",
+        status: "Confirmed",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Booking creation failed",
+        description: error.message || "Could not create booking",
         variant: "destructive",
       });
-      return;
     }
-
-    const next: Booking = {
-      id: bookingRef,
-      dbId: data.id,
-      guest: newBooking.guest.trim(),
-      room: newBooking.room.trim(),
-      checkIn: checkInDate,
-      checkOut: checkOutDate,
-      total: Number(newBooking.total),
-      status: newBooking.status,
-    };
-
-    setBookings((prev) => [next, ...prev]);
-
-    logAction({
-      module: "bookings",
-      action: "booking_created",
-      details: `${next.id} for ${next.guest} in ${next.room} from ${next.checkIn} to ${next.checkOut}.`,
-    });
-    toast({
-      title: "Booking created",
-      description: `Booking ${next.id} for ${next.guest} has been created successfully.`,
-    });
-
-    if (settings.notifications?.newBookings && settings.property?.email) {
-      void sendNotificationEmail({
-        to: settings.property.email,
-        subject: `New booking created: ${next.id}`,
-        text:
-          `A new booking was created.\n\n` +
-          `Booking: ${next.id}\nGuest: ${next.guest}\nRoom: ${next.room}\n` +
-          `Check-in: ${next.checkIn}\nCheck-out: ${next.checkOut}\nAmount: ${formatINR(next.total)}`,
-      });
-    }
-
-    setAddOpen(false);
-    setDateRange(undefined);
-    setNewBooking({
-      guest: "",
-      room: "",
-      total: "",
-      status: "Confirmed",
-    });
   };
 
   const updateRoomOccupancy = (params: { roomLabel: string; guest: string; occupied: boolean }) => {
@@ -378,42 +330,30 @@ const Bookings = () => {
       return;
     }
 
-    updateRoomOccupancy({ roomLabel: targetBooking.room, guest: targetBooking.guest, occupied: true });
-    setBookings((prev) => prev.map((b) => (b.id === bookingId ? { ...b, status: "Checked In" } : b)));
-
-    // Update in Supabase
-    const { data: { user } } = await supabase.auth.getUser();
-    if (user) {
-      let query = supabase
-        .from('bookings')
-        .update({ status: 'Checked In' })
-        .eq('user_id', user.id);
-
+    try {
+      updateRoomOccupancy({ roomLabel: targetBooking.room, guest: targetBooking.guest, occupied: true });
+      
       if (targetBooking.dbId) {
-        query = query.eq('id', targetBooking.dbId);
-      } else {
-        query = query
-          .eq('guest_name', targetBooking.guest)
-          .eq('check_in', targetBooking.checkIn)
-          .eq('check_out', targetBooking.checkOut);
+        await api.updateBooking(targetBooking.dbId, { status: 'Checked In' });
       }
+      
+      setBookings((prev) => prev.map((b) => (b.id === bookingId ? { ...b, status: "Checked In" } : b)));
 
-      await query;
-    }
+      logAction({
+        module: "bookings",
+        action: "booking_checked_in",
+        details: `${targetBooking.id} checked in for room ${targetBooking.room}.`,
+      });
 
-    logAction({
-      module: "bookings",
-      action: "booking_checked_in",
-      details: `${targetBooking.id} checked in for room ${targetBooking.room}.`,
-    });
-
-    if (settings.notifications?.checkInReminders && settings.property?.email) {
-      void sendNotificationEmail({
-        to: settings.property.email,
-        subject: `Guest checked in: ${targetBooking.id}`,
-        text:
-          `Check-in update\n\n` +
-          `Booking: ${targetBooking.id}\nGuest: ${targetBooking.guest}\nRoom: ${targetBooking.room}\nStatus: Checked In`,
+      toast({
+        title: "Checked in",
+        description: `${targetBooking.guest} checked in successfully.`,
+      });
+    } catch (error: any) {
+      toast({
+        title: "Check-in failed",
+        description: error.message || "Could not check in",
+        variant: "destructive",
       });
     }
   };
@@ -422,96 +362,83 @@ const Bookings = () => {
     const targetBooking = bookings.find((b) => b.id === bookingId);
     if (!targetBooking || targetBooking.status !== "Checked In") return;
 
-    updateRoomOccupancy({ roomLabel: targetBooking.room, guest: targetBooking.guest, occupied: false });
-    setBookings((prev) => prev.map((b) => (b.id === bookingId ? { ...b, status: "Checked Out" } : b)));
-
-    // Update in Supabase
-    const { data: { user } } = await supabase.auth.getUser();
-    if (user) {
-      let query = supabase
-        .from('bookings')
-        .update({ status: 'Checked Out' })
-        .eq('user_id', user.id);
-
+    try {
+      updateRoomOccupancy({ roomLabel: targetBooking.room, guest: targetBooking.guest, occupied: false });
+      
       if (targetBooking.dbId) {
-        query = query.eq('id', targetBooking.dbId);
-      } else {
-        query = query
-          .eq('guest_name', targetBooking.guest)
-          .eq('check_in', targetBooking.checkIn)
-          .eq('check_out', targetBooking.checkOut);
+        await api.updateBooking(targetBooking.dbId, { status: 'Checked Out' });
       }
+      
+      setBookings((prev) => prev.map((b) => (b.id === bookingId ? { ...b, status: "Checked Out" } : b)));
 
-      await query;
-    }
+      const roomNumber = getRoomNumberFromLabel(targetBooking.room);
+      if (roomNumber) {
+        const hasOpenTask = housekeepingTasks.some(
+          (task) => task.room === roomNumber && task.status !== "Completed" && /turnover clean/i.test(task.task),
+        );
 
-    const roomNumber = getRoomNumberFromLabel(targetBooking.room);
-    if (roomNumber) {
-      const hasOpenTask = housekeepingTasks.some(
-        (task) => task.room === roomNumber && task.status !== "Completed" && /turnover clean/i.test(task.task),
-      );
+        if (!hasOpenTask) {
+          const taskId =
+            typeof crypto !== "undefined" && "randomUUID" in crypto
+              ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                (crypto as any).randomUUID()
+              : String(Date.now());
 
-      if (!hasOpenTask) {
-        const taskId =
-          typeof crypto !== "undefined" && "randomUUID" in crypto
-            ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              (crypto as any).randomUUID()
-            : String(Date.now());
-
-        setHousekeepingTasks((prevTasks) => [
-          {
+          const newTask = {
             id: taskId,
             room: roomNumber,
             task: "Turnover Clean",
             assignee: "Unassigned",
             priority: "High",
             status: "Pending",
-          },
-          ...prevTasks,
-        ]);
+          };
 
-        // Save housekeeping task to Supabase
-        if (user) {
-          await supabase
-            .from('housekeeping')
-            .insert({
-              user_id: user.id,
-              room_id: null,
-              type: 'Turnover Clean',
+          setHousekeepingTasks((prevTasks) => [newTask, ...prevTasks]);
+
+          // Create housekeeping task via API
+          try {
+            await api.createHousekeepingTask({
+              room_number: roomNumber,
+              task: 'Turnover Clean',
+              assigned_to: 'Unassigned',
+              priority: 'High',
               status: 'Pending',
-              task_date: new Date().toISOString().split('T')[0],
-              notes: `Room: ${roomNumber} | From booking ${targetBooking.id}`,
+              notes: `From booking ${targetBooking.id}`,
             });
-        }
+          } catch (error) {
+            console.error('Failed to create housekeeping task:', error);
+          }
 
-        logAction({
-          module: "housekeeping",
-          action: "task_auto_created",
-          details: `Turnover clean task auto-created for Room ${roomNumber} from booking ${targetBooking.id}.`,
-        });
+          logAction({
+            module: "housekeeping",
+            action: "task_auto_created",
+            details: `Turnover clean task auto-created for Room ${roomNumber} from booking ${targetBooking.id}.`,
+          });
 
-        toast({
-          title: "Housekeeping task created",
-          description: `Turnover clean task added for Room ${roomNumber}.`,
-        });
-
-        if (settings.notifications?.housekeepingUpdates && settings.property?.email) {
-          void sendNotificationEmail({
-            to: settings.property.email,
-            subject: `Housekeeping task created for Room ${roomNumber}`,
-            text:
-              `A turnover clean task was auto-created.\n\n` +
-              `Room: ${roomNumber}\nSource booking: ${targetBooking.id}\nTask: Turnover Clean\nPriority: High`,
+          toast({
+            title: "Housekeeping task created",
+            description: `Turnover clean task added for Room ${roomNumber}.`,
           });
         }
       }
-    }
 
-    logAction({
-      module: "bookings",
-      action: "booking_checked_out",
-      details: `${targetBooking.id} checked out from room ${targetBooking.room}.`,
-    });
+      logAction({
+        module: "bookings",
+        action: "booking_checked_out",
+        details: `${targetBooking.id} checked out from room ${targetBooking.room}.`,
+      });
+
+      toast({
+        title: "Checked out",
+        description: `${targetBooking.guest} checked out successfully.`,
+      });
+    } catch (error: any) {
+      toast({
+        title: "Check-out failed",
+        description: error.message || "Could not check out",
+        variant: "destructive",
+      });
+    }
   };
 
   return (

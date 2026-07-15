@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -20,10 +20,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { BedDouble, Search, Plus } from "lucide-react";
-import { useAppState } from "@/hooks/use-app-state";
 import { formatINR } from "@/lib/currency";
 import { toast } from "@/components/ui/use-toast";
-import { isSupabaseConfigured, supabase } from "@/lib/supabase";
+import api from "@/lib/api";
 import { useAuditLog } from "@/hooks/use-audit-log";
 
 type RoomStatus = "available" | "occupied" | "maintenance" | "cleaning";
@@ -62,7 +61,33 @@ const statusConfig: Record<RoomStatus, { label: string; className: string }> = {
 };
 
 const Rooms = () => {
-  const [rooms, setRooms] = useAppState<Room[]>("rm_rooms", initialRooms);
+  const [rooms, setRooms] = useState<Room[]>([]);
+  const [loading, setLoading] = useState(true);
+  
+  // Load rooms from API on mount
+  useEffect(() => {
+    const fetchRooms = async () => {
+      try {
+        setLoading(true);
+        const { rooms: data } = await api.getRooms();
+        // Map snake_case to camelCase
+        const mappedRooms = (data || []).map((room: any) => ({
+          ...room,
+          imageUrl: room.image_url,
+        }));
+        setRooms(mappedRooms);
+      } catch (error: any) {
+        toast({
+          title: "Failed to load rooms",
+          description: error.message || "Could not load rooms",
+          variant: "destructive",
+        });
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchRooms();
+  }, []);
   const { logAction } = useAuditLog();
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<RoomStatus | "all">("all");
@@ -109,27 +134,6 @@ const Rooms = () => {
       reader.readAsDataURL(file);
     });
 
-  const uploadRoomImage = async (params: { roomId: string; imageFile: File }): Promise<string> => {
-    if (!isSupabaseConfigured || !supabase) {
-      return readFileAsDataUrl(params.imageFile);
-    }
-
-    const safeName = params.imageFile.name.replace(/[^a-zA-Z0-9._-]/g, "-");
-    const filePath = `${params.roomId}/${Date.now()}-${safeName}`;
-
-    const { error } = await supabase.storage.from("room-images").upload(filePath, params.imageFile, {
-      cacheControl: "3600",
-      upsert: false,
-    });
-
-    if (error) {
-      throw error;
-    }
-
-    const { data } = supabase.storage.from("room-images").getPublicUrl(filePath);
-    return data.publicUrl;
-  };
-
   const handleSelectRoomImage = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0] ?? null;
     if (!file) {
@@ -166,58 +170,75 @@ const Rooms = () => {
     event.preventDefault();
     if (!canSubmitNewRoom) return;
 
-    const id =
-      typeof crypto !== "undefined" && "randomUUID" in crypto
-        ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          (crypto as any).randomUUID()
-        : String(Date.now());
+    setIsUploadingImage(true);
 
-    let imageUrl: string | undefined;
-    if (newRoomImageFile) {
-      setIsUploadingImage(true);
-      try {
-        imageUrl = await uploadRoomImage({ roomId: id, imageFile: newRoomImageFile });
-      } catch {
-        toast({
-          title: "Image upload failed",
-          description: "Please verify your storage bucket setup and try again.",
-          variant: "destructive",
-        });
-        setIsUploadingImage(false);
-        return;
+    try {
+      let image_url: string | undefined;
+      
+      // Convert image to base64 if provided
+      if (newRoomImageFile) {
+        try {
+          image_url = await readFileAsDataUrl(newRoomImageFile);
+        } catch {
+          toast({
+            title: "Image processing failed",
+            description: "Could not process the image. Continuing without image.",
+            variant: "destructive",
+          });
+        }
       }
+
+      const roomData = {
+        number: newRoom.number.trim(),
+        type: newRoom.type.trim(),
+        floor: Number(newRoom.floor),
+        status: newRoom.status,
+        price: Number(newRoom.price),
+        guest: newRoom.status === "occupied" ? newRoom.guest.trim() || null : null,
+        image_url,
+      };
+
+      const { room } = await api.createRoom(roomData);
+      
+      // Map snake_case to camelCase
+      const mappedRoom = {
+        ...room,
+        imageUrl: room.image_url,
+      };
+      
+      setRooms((prev) => [mappedRoom, ...prev]);
+      
+      toast({
+        title: "Room created",
+        description: `Room ${room.number} has been added successfully.`,
+      });
+
+      logAction({
+        module: "rooms",
+        action: "room_created",
+        details: `Room ${room.number} (${room.type}) created on floor ${room.floor}.`,
+      });
+
+      setAddOpen(false);
+      setNewRoomImageFile(null);
+      setNewRoomImagePreview(null);
+      setNewRoom({
+        number: "",
+        type: "Standard",
+        floor: "1",
+        status: "available",
+        price: "120",
+        guest: "",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Failed to create room",
+        description: error.message || "Could not create room",
+        variant: "destructive",
+      });
+    } finally {
       setIsUploadingImage(false);
     }
-
-    const nextRoom: Room = {
-      id,
-      number: newRoom.number.trim(),
-      type: newRoom.type.trim(),
-      floor: Number(newRoom.floor),
-      status: newRoom.status,
-      price: Number(newRoom.price),
-      guest: newRoom.status === "occupied" ? newRoom.guest.trim() || undefined : undefined,
-      imageUrl,
-    };
-
-    setRooms((prev) => [nextRoom, ...prev]);
-    logAction({
-      module: "rooms",
-      action: "room_created",
-      details: `Room ${nextRoom.number} (${nextRoom.type}) created on floor ${nextRoom.floor}.`,
-    });
-    setAddOpen(false);
-    setIsUploadingImage(false);
-    setNewRoomImageFile(null);
-    setNewRoomImagePreview(null);
-    setNewRoom({
-      number: "",
-      type: "Standard",
-      floor: "1",
-      status: "available",
-      price: "120",
-      guest: "",
-    });
   };
 
   const counts = rooms.reduce(

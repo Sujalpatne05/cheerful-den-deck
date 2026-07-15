@@ -1,18 +1,28 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { BedDouble, Eye, EyeOff } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { isSupabaseConfigured } from "@/lib/supabase";
 
 const Login = () => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
-  const { login } = useAuth();
+  const { login, user } = useAuth();
   const navigate = useNavigate();
+
+  // Redirect after login based on role
+  useEffect(() => {
+    if (user) {
+      if (user.role === "superadmin") {
+        navigate("/superadmin/dashboard", { replace: true });
+      } else {
+        navigate("/", { replace: true });
+      }
+    }
+  }, [user, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -22,9 +32,7 @@ const Login = () => {
       return;
     }
     const success = await login(email, password);
-    if (success) {
-      navigate("/");
-    } else {
+    if (!success) {
       setError("Invalid credentials");
     }
   };
@@ -85,9 +93,7 @@ const Login = () => {
           </Button>
 
           <p className="text-center text-xs text-muted-foreground">
-            {isSupabaseConfigured
-              ? "Use a Supabase email/password user to sign in"
-              : "Demo: use any email & password to sign in"}
+            Use your email and password to sign in
           </p>
         </form>
       </div>

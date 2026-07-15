@@ -1,124 +1,157 @@
-# Welcome to your Lovable project
+# Room Management System
 
-## Project info
+A full-stack room/hotel management system with React frontend and Node.js/Express backend using PostgreSQL.
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+## Project Structure
 
-## How can I edit this code?
+```
+cheerful-den-deck/
+├── frontend/          # React + Vite frontend application
+├── backend/           # Node.js + Express API server
+└── README.md          # This file
+```
 
-There are several ways of editing your application.
+## Tech Stack
 
-**Use Lovable**
+### Frontend
+- React 18
+- TypeScript
+- Vite
+- TailwindCSS
+- shadcn/ui components
+- React Router
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
+### Backend
+- Node.js
+- Express
+- PostgreSQL
+- JWT Authentication
+- bcryptjs for password hashing
 
-Changes made via Lovable will be committed automatically to this repo.
+## Quick Start
 
-**Use your preferred IDE**
+### Prerequisites
+- Node.js (v18 or higher)
+- PostgreSQL (v14 or higher)
+- npm or yarn
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
+### 1. Setup Backend
 
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
+```bash
+cd backend
+npm install
+```
 
-Follow these steps:
+Configure database settings in `backend/.env`:
+```env
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=room_management
+DB_USER=postgres
+DB_PASSWORD=your_password
+```
 
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
+Create database and initialize schema:
+```bash
+# Create database (using psql or createdb)
+createdb room_management
 
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
+# Initialize database schema
+npm run db:init
+```
 
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
+Start backend server:
+```bash
 npm run dev
 ```
 
-**Edit a file directly in GitHub**
+Backend will run on `http://localhost:5000`
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+### 2. Setup Frontend
 
-**Use GitHub Codespaces**
+```bash
+cd frontend
+npm install
+```
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
-
-## What technologies are used for this project?
-
-This project is built with:
-
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
-
-## How can I deploy this project?
-
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
-
-## Can I connect a custom domain to my Lovable project?
-
-Yes, you can!
-
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
-
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
-
-## Payment Gateway Setup (Razorpay + Supabase Edge Functions)
-
-This project includes Razorpay integration for invoice payments.
-
-### 1) Frontend env
-
-Set these in your `.env`:
-
+Configure API URL in `frontend/.env`:
 ```env
-VITE_SUPABASE_URL=...
-VITE_SUPABASE_ANON_KEY=...
-VITE_SUPABASE_FUNCTIONS_URL=https://<project-ref>.supabase.co/functions/v1
-VITE_RAZORPAY_KEY_ID=rzp_test_xxxxx
+VITE_API_URL=http://localhost:5000/api
 ```
 
-If `VITE_SUPABASE_FUNCTIONS_URL` is omitted, the app infers it as `${VITE_SUPABASE_URL}/functions/v1`.
-
-### 2) Edge function secrets
-
-Set secrets in Supabase:
-
-```sh
-supabase secrets set RAZORPAY_KEY_ID=rzp_test_xxxxx
-supabase secrets set RAZORPAY_KEY_SECRET=xxxxxxxx
+Start frontend development server:
+```bash
+npm run dev
 ```
 
-### 3) Deploy functions
+Frontend will run on `http://localhost:8080`
 
-```sh
-supabase functions deploy create-razorpay-order
-supabase functions deploy verify-razorpay-payment
-supabase functions deploy send-notification-email
+## Default Login Credentials
+
+After initializing the database, you can login with:
+- **Email**: `admin@hotel.com`
+- **Password**: `admin123`
+
+## Features
+
+- 🏨 Room Management (Create, Read, Update, Delete)
+- 📅 Booking Management
+- 🧹 Housekeeping Tasks
+- 💰 Billing & Invoicing
+- 👥 Staff Management
+- 📊 Dashboard & Reports
+- 🔐 JWT Authentication
+- 👤 User Roles & Permissions
+
+## API Documentation
+
+See `backend/README.md` for detailed API documentation.
+
+## Development
+
+### Backend Development
+```bash
+cd backend
+npm run dev  # Starts with nodemon for auto-reload
 ```
 
-### 3.1) Email notification secrets (Resend)
-
-Set email provider secrets in Supabase:
-
-```sh
-supabase secrets set RESEND_API_KEY=re_xxxxx
-supabase secrets set NOTIFY_FROM_EMAIL="Hotel Notifications <onboarding@resend.dev>"
+### Frontend Development
+```bash
+cd frontend
+npm run dev  # Starts Vite dev server
 ```
 
-`NOTIFY_FROM_EMAIL` is optional; if omitted, a default Resend onboarding sender is used.
+## Building for Production
 
-### 4) Billing behavior
+### Backend
+```bash
+cd backend
+npm start
+```
 
-- If Razorpay config is present, the **Pay Online** button opens Razorpay Checkout and verifies signature server-side.
-- If Razorpay config is missing, billing falls back to **Pay UPI** deeplink using UPI VPA from settings.
-- Booking and billing events can send notification emails to the property email configured in settings, based on notification toggles.
+### Frontend
+```bash
+cd frontend
+npm run build
+npm run preview  # Preview production build
+```
+
+## Environment Variables
+
+### Backend (`backend/.env`)
+- `PORT` - Server port (default: 5000)
+- `DB_HOST` - PostgreSQL host
+- `DB_PORT` - PostgreSQL port
+- `DB_NAME` - Database name
+- `DB_USER` - Database user
+- `DB_PASSWORD` - Database password
+- `JWT_SECRET` - Secret key for JWT tokens
+- `JWT_EXPIRES_IN` - Token expiration time
+- `FRONTEND_URL` - Frontend URL for CORS
+
+### Frontend (`frontend/.env`)
+- `VITE_API_URL` - Backend API URL
+
+## License
+
+This project is private and confidential.

@@ -17,6 +17,15 @@ import SettingsPage from "@/pages/SettingsPage";
 import Login from "@/pages/Login";
 import NotFound from "./pages/NotFound";
 import { canAccessRoute } from "@/lib/access";
+import SuperAdminLayout from "@/superadmin/SuperAdminLayout";
+import SuperAdminDashboard from "@/superadmin/SuperAdminDashboard";
+import SuperAdminProperties from "@/superadmin/SuperAdminProperties";
+import SuperAdminSubscriptions from "@/superadmin/SuperAdminSubscriptions";
+import SuperAdminRevenue from "@/superadmin/SuperAdminRevenue";
+import SuperAdminUsers from "@/superadmin/SuperAdminUsers";
+import SuperAdminAnalytics from "@/superadmin/SuperAdminAnalytics";
+import SuperAdminSettings from "@/superadmin/SuperAdminSettings";
+import SuperAdminSupport from "@/superadmin/SuperAdminSupport";
 
 const queryClient = new QueryClient();
 
@@ -41,6 +50,19 @@ const App = () => (
         <BrowserRouter>
           <Routes>
             <Route path="/login" element={<Login />} />
+            {/* Super Admin routes */}
+            <Route element={<ProtectedRoute allowedRoles={["superadmin"]}><SuperAdminLayout /></ProtectedRoute>}>
+              <Route path="/superadmin/dashboard" element={<ProtectedRoute routePath="/superadmin/dashboard" allowedRoles={["superadmin"]}><SuperAdminDashboard /></ProtectedRoute>} />
+              <Route path="/superadmin/properties" element={<ProtectedRoute routePath="/superadmin/properties" allowedRoles={["superadmin"]}><SuperAdminProperties /></ProtectedRoute>} />
+              <Route path="/superadmin/subscriptions" element={<ProtectedRoute routePath="/superadmin/subscriptions" allowedRoles={["superadmin"]}><SuperAdminSubscriptions /></ProtectedRoute>} />
+              <Route path="/superadmin/revenue" element={<ProtectedRoute routePath="/superadmin/revenue" allowedRoles={["superadmin"]}><SuperAdminRevenue /></ProtectedRoute>} />
+              <Route path="/superadmin/users" element={<ProtectedRoute routePath="/superadmin/users" allowedRoles={["superadmin"]}><SuperAdminUsers /></ProtectedRoute>} />
+              <Route path="/superadmin/analytics" element={<ProtectedRoute routePath="/superadmin/analytics" allowedRoles={["superadmin"]}><SuperAdminAnalytics /></ProtectedRoute>} />
+              <Route path="/superadmin/settings" element={<ProtectedRoute routePath="/superadmin/settings" allowedRoles={["superadmin"]}><SuperAdminSettings /></ProtectedRoute>} />
+              <Route path="/superadmin/support" element={<ProtectedRoute routePath="/superadmin/support" allowedRoles={["superadmin"]}><SuperAdminSupport /></ProtectedRoute>} />
+              {/* All Super Admin routes added */}
+            </Route>
+            {/* Admin/Manager/etc. routes */}
             <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
               <Route path="/" element={<ProtectedRoute routePath="/"><Dashboard /></ProtectedRoute>} />
               <Route path="/rooms" element={<ProtectedRoute routePath="/rooms"><Rooms /></ProtectedRoute>} />
