@@ -3,7 +3,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { useAppState } from "@/hooks/use-app-state";
+import { toast } from "@/components/ui/use-toast";
 import {
   Dialog,
   DialogContent,
@@ -20,7 +20,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, UserCog, Mail, Phone } from "lucide-react";
+import { Plus, UserCog, Mail, Phone, Pencil, Trash2 } from "lucide-react";
+import { useAppState } from "@/hooks/use-app-state";
 
 type StaffStatus = "On Duty" | "Off Duty";
 type StaffShift = "Morning" | "Evening" | "Night";
@@ -52,6 +53,8 @@ const statusColors: Record<StaffStatus, string> = {
 const Staff = () => {
   const [staff, setStaff] = useAppState<StaffMember[]>("rm_staff", initialStaff);
   const [addOpen, setAddOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editingStaff, setEditingStaff] = useState<StaffMember | null>(null);
   const [newStaff, setNewStaff] = useState<{
     name: string;
     role: string;
@@ -95,8 +98,61 @@ const Staff = () => {
     };
 
     setStaff((prev) => [next, ...prev]);
+    toast({
+      title: "Staff member added",
+      description: `${next.name} has been added successfully.`,
+    });
     setAddOpen(false);
     setNewStaff({ name: "", role: "", email: "", phone: "", status: "On Duty", shift: "Morning" });
+  };
+
+  const handleEditStaff = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!editingStaff || !canSubmitNewStaff) return;
+
+    const updated: StaffMember = {
+      id: editingStaff.id,
+      name: newStaff.name.trim(),
+      role: newStaff.role.trim(),
+      email: newStaff.email.trim(),
+      phone: newStaff.phone.trim(),
+      status: newStaff.status,
+      shift: newStaff.shift,
+    };
+
+    setStaff((prev) => prev.map(s => s.id === editingStaff.id ? updated : s));
+    toast({
+      title: "Staff member updated",
+      description: `${updated.name} has been updated successfully.`,
+    });
+    setEditOpen(false);
+    setEditingStaff(null);
+    setNewStaff({ name: "", role: "", email: "", phone: "", status: "On Duty", shift: "Morning" });
+  };
+
+  const handleDeleteStaff = (staffMember: StaffMember) => {
+    if (!confirm(`Are you sure you want to remove ${staffMember.name} from staff?`)) {
+      return;
+    }
+
+    setStaff((prev) => prev.filter(s => s.id !== staffMember.id));
+    toast({
+      title: "Staff member removed",
+      description: `${staffMember.name} has been removed successfully.`,
+    });
+  };
+
+  const openEditDialog = (staffMember: StaffMember) => {
+    setEditingStaff(staffMember);
+    setNewStaff({
+      name: staffMember.name,
+      role: staffMember.role,
+      email: staffMember.email,
+      phone: staffMember.phone,
+      status: staffMember.status,
+      shift: staffMember.shift,
+    });
+    setEditOpen(true);
   };
 
   return (
@@ -208,6 +264,104 @@ const Staff = () => {
             </form>
           </DialogContent>
         </Dialog>
+
+        {/* Edit Staff Dialog */}
+        <Dialog open={editOpen} onOpenChange={setEditOpen}>
+          <DialogContent className="sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle>Edit Staff Member</DialogTitle>
+            </DialogHeader>
+
+            <form onSubmit={handleEditStaff} className="space-y-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-staff-name">Name</Label>
+                  <Input
+                    id="edit-staff-name"
+                    placeholder="Full name"
+                    value={newStaff.name}
+                    onChange={(e) => setNewStaff((prev) => ({ ...prev, name: e.target.value }))}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-staff-role">Role</Label>
+                  <Input
+                    id="edit-staff-role"
+                    placeholder="e.g. Front Desk"
+                    value={newStaff.role}
+                    onChange={(e) => setNewStaff((prev) => ({ ...prev, role: e.target.value }))}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-staff-email">Email</Label>
+                  <Input
+                    id="edit-staff-email"
+                    type="email"
+                    placeholder="name@lodge.com"
+                    value={newStaff.email}
+                    onChange={(e) => setNewStaff((prev) => ({ ...prev, email: e.target.value }))}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-staff-phone">Phone</Label>
+                  <Input
+                    id="edit-staff-phone"
+                    placeholder="+1 555-1001"
+                    value={newStaff.phone}
+                    onChange={(e) => setNewStaff((prev) => ({ ...prev, phone: e.target.value }))}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label>Status</Label>
+                  <Select
+                    value={newStaff.status}
+                    onValueChange={(value) => setNewStaff((prev) => ({ ...prev, status: value as StaffStatus }))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="On Duty">On Duty</SelectItem>
+                      <SelectItem value="Off Duty">Off Duty</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Shift</Label>
+                  <Select
+                    value={newStaff.shift}
+                    onValueChange={(value) => setNewStaff((prev) => ({ ...prev, shift: value as StaffShift }))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select shift" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Morning">Morning</SelectItem>
+                      <SelectItem value="Evening">Evening</SelectItem>
+                      <SelectItem value="Night">Night</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setEditOpen(false)}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={!canSubmitNewStaff}>
+                  Update Staff
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -246,6 +400,27 @@ const Staff = () => {
                 <div className="flex items-center gap-2">
                   <UserCog className="h-3.5 w-3.5" />Shift: {s.shift}
                 </div>
+              </div>
+              {/* Action Buttons */}
+              <div className="mt-4 flex gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => openEditDialog(s)}
+                >
+                  <Pencil className="h-3 w-3 mr-1" />
+                  Edit
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="flex-1 text-destructive hover:bg-destructive hover:text-destructive-foreground"
+                  onClick={() => handleDeleteStaff(s)}
+                >
+                  <Trash2 className="h-3 w-3 mr-1" />
+                  Delete
+                </Button>
               </div>
             </CardContent>
           </Card>

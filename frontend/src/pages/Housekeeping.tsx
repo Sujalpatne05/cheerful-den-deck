@@ -1,9 +1,10 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useAppState } from "@/hooks/use-app-state";
+import api from "@/lib/api";
+import { toast } from "@/components/ui/use-toast";
 import {
   Dialog,
   DialogContent,
@@ -20,7 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Sparkles, CheckCircle2 } from "lucide-react";
+import { Sparkles, CheckCircle2, Plus, Pencil, Trash2 } from "lucide-react";
 
 type TaskPriority = "High" | "Medium" | "Low";
 type TaskStatus = "Pending" | "In Progress" | "Completed";
@@ -56,8 +57,10 @@ const statusColors: Record<TaskStatus, string> = {
 };
 
 const Housekeeping = () => {
-  const [tasks, setTasks] = useAppState<HousekeepingTask[]>("rm_housekeeping_tasks", initialTasks);
+  const [tasks, setTasks] = useState<HousekeepingTask[]>([]);
   const [addOpen, setAddOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editingTask, setEditingTask] = useState<HousekeepingTask | null>(null);
   const [newTask, setNewTask] = useState<{
     room: string;
     task: string;
@@ -71,6 +74,30 @@ const Housekeeping = () => {
     priority: "Medium",
     status: "Pending",
   });
+
+  useEffect(() => {
+    const fetchTasks = async () => {
+      try {
+        const { tasks: data } = await api.getHousekeepingTasks();
+        const mapped = (data || []).map((task: any) => ({
+          id: task.id,
+          room: task.room_number,
+          task: task.task,
+          assignee: task.assigned_to || "Unassigned",
+          priority: task.priority,
+          status: task.status,
+        }));
+        setTasks(mapped);
+      } catch (error: any) {
+        toast({
+          title: "Failed to load tasks",
+          description: error.message || "Could not load housekeeping tasks",
+          variant: "destructive",
+        });
+      }
+    };
+    fetchTasks();
+  }, []);
 
   const canSubmitNewTask =
     newTask.room.trim().length > 0 &&
@@ -91,28 +118,110 @@ const Housekeeping = () => {
     return { pending, inProgress, completed };
   }, [tasks]);
 
-  const handleCreateTask = (event: React.FormEvent) => {
+  const handleCreateTask = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!canSubmitNewTask) return;
 
-    const id =
-      typeof crypto !== "undefined" && "randomUUID" in crypto
-        ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          (crypto as any).randomUUID()
-        : String(Date.now());
+    try {
+      const taskData = {
+        room_number: newTask.room.trim(),
+        task: newTask.task.trim(),
+        assigned_to: newTask.assignee.trim(),
+        priority: newTask.priority,
+        status: newTask.status,
+        notes: "",
+      };
 
-    const next: HousekeepingTask = {
-      id,
-      room: newTask.room.trim(),
-      task: newTask.task.trim(),
-      assignee: newTask.assignee.trim(),
-      priority: newTask.priority,
-      status: newTask.status,
-    };
+      const { task } = await api.createHousekeepingTask(taskData);
 
-    setTasks((prev) => [next, ...prev]);
-    setAddOpen(false);
-    setNewTask({ room: "", task: "", assignee: "", priority: "Medium", status: "Pending" });
+      const mappedTask: HousekeepingTask = {
+        id: task.id,
+        room: task.room_number,
+        task: task.task,
+        assignee: task.assigned_to || "Unassigned",
+        priority: task.priority,
+        status: task.status,
+      };
+
+      setTasks((prev) => [mappedTask, ...prev]);
+      toast({ title: "Task created", description: "Housekeeping task added successfully" });
+      setAddOpen(false);
+      setNewTask({ room: "", task: "", assignee: "", priority: "Medium", status: "Pending" });
+    } catch (error: any) {
+      toast({
+        title: "Failed to create task",
+        description: error.message || "Could not create task",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleEditTask = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!editingTask || !canSubmitNewTask) return;
+
+    try {
+      const taskData = {
+        room_number: newTask.room.trim(),
+        task: newTask.task.trim(),
+        assigned_to: newTask.assignee.trim(),
+        priority: newTask.priority,
+        status: newTask.status,
+      };
+
+      const { task } = await api.updateHousekeepingTask(editingTask.id, taskData);
+
+      const mappedTask: HousekeepingTask = {
+        id: task.id,
+        room: task.room_number,
+        task: task.task,
+        assignee: task.assigned_to || "Unassigned",
+        priority: task.priority,
+        status: task.status,
+      };
+
+      setTasks((prev) => prev.map(t => t.id === editingTask.id ? mappedTask : t));
+      toast({ title: "Task updated", description: "Housekeeping task updated successfully" });
+      setEditOpen(false);
+      setEditingTask(null);
+      setNewTask({ room: "", task: "", assignee: "", priority: "Medium", status: "Pending" });
+    } catch (error: any) {
+      toast({
+        title: "Failed to update task",
+        description: error.message || "Could not update task",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleDeleteTask = async (task: HousekeepingTask) => {
+    if (!confirm(`Are you sure you want to delete this task for Room ${task.room}?`)) {
+      return;
+    }
+
+    try {
+      await api.deleteHousekeepingTask(task.id);
+      setTasks((prev) => prev.filter(t => t.id !== task.id));
+      toast({ title: "Task deleted", description: "Housekeeping task deleted successfully" });
+    } catch (error: any) {
+      toast({
+        title: "Failed to delete task",
+        description: error.message || "Could not delete task",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const openEditDialog = (task: HousekeepingTask) => {
+    setEditingTask(task);
+    setNewTask({
+      room: task.room,
+      task: task.task,
+      assignee: task.assignee,
+      priority: task.priority,
+      status: task.status,
+    });
+    setEditOpen(true);
   };
 
   return (
@@ -213,6 +322,94 @@ const Housekeeping = () => {
             </form>
           </DialogContent>
         </Dialog>
+
+        {/* Edit Task Dialog */}
+        <Dialog open={editOpen} onOpenChange={setEditOpen}>
+          <DialogContent className="sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle>Edit Task</DialogTitle>
+            </DialogHeader>
+
+            <form onSubmit={handleEditTask} className="space-y-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-room">Room</Label>
+                  <Input
+                    id="edit-room"
+                    placeholder="e.g. 101"
+                    value={newTask.room}
+                    onChange={(e) => setNewTask((prev) => ({ ...prev, room: e.target.value }))}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="edit-assignee">Assignee</Label>
+                  <Input
+                    id="edit-assignee"
+                    placeholder="e.g. Maria G."
+                    value={newTask.assignee}
+                    onChange={(e) => setNewTask((prev) => ({ ...prev, assignee: e.target.value }))}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="edit-task">Task Description</Label>
+                <Input
+                  id="edit-task"
+                  placeholder="e.g. Deep Clean"
+                  value={newTask.task}
+                  onChange={(e) => setNewTask((prev) => ({ ...prev, task: e.target.value }))}
+                />
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label>Priority</Label>
+                  <Select
+                    value={newTask.priority}
+                    onValueChange={(value) => setNewTask((prev) => ({ ...prev, priority: value as TaskPriority }))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select priority" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="High">High</SelectItem>
+                      <SelectItem value="Medium">Medium</SelectItem>
+                      <SelectItem value="Low">Low</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Status</Label>
+                  <Select
+                    value={newTask.status}
+                    onValueChange={(value) => setNewTask((prev) => ({ ...prev, status: value as TaskStatus }))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Pending">Pending</SelectItem>
+                      <SelectItem value="In Progress">In Progress</SelectItem>
+                      <SelectItem value="Completed">Completed</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setEditOpen(false)}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={!canSubmitNewTask}>
+                  Update Task
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
       </div>
 
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
@@ -243,6 +440,7 @@ const Housekeeping = () => {
                 <th className="px-5 py-3 font-medium">Assignee</th>
                 <th className="px-5 py-3 font-medium">Priority</th>
                 <th className="px-5 py-3 font-medium">Status</th>
+                <th className="px-5 py-3 font-medium">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -260,6 +458,21 @@ const Housekeeping = () => {
                     <Badge variant="outline" className={statusColors[t.status]}>
                       {t.status}
                     </Badge>
+                  </td>
+                  <td className="px-5 py-3">
+                    <div className="flex justify-end gap-2">
+                      <Button size="sm" variant="ghost" onClick={() => openEditDialog(t)}>
+                        <Pencil className="h-3 w-3" />
+                      </Button>
+                      <Button 
+                        size="sm" 
+                        variant="ghost" 
+                        className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                        onClick={() => handleDeleteTask(t)}
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
+                    </div>
                   </td>
                 </tr>
               ))}

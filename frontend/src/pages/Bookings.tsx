@@ -26,7 +26,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Search, Plus } from "lucide-react";
+import { Search, Plus, Pencil, Trash2 } from "lucide-react";
 
 type BookingStatus = "Checked In" | "Checked Out" | "Confirmed" | "Pending" | "Cancelled";
 
@@ -156,6 +156,8 @@ const Bookings = () => {
   const { logAction } = useAuditLog();
   const [search, setSearch] = useState("");
   const [addOpen, setAddOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editingBooking, setEditingBooking] = useState<Booking | null>(null);
   const [dateRange, setDateRange] = useState<DateRange | undefined>();
   const [newBooking, setNewBooking] = useState<{
     guest: string;
@@ -441,6 +443,102 @@ const Bookings = () => {
     }
   };
 
+  const handleEditBooking = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!editingBooking || !canSubmitNewBooking || !dateRange?.from || !dateRange?.to) return;
+
+    const checkInDate = format(dateRange.from, "yyyy-MM-dd");
+    const checkOutDate = format(dateRange.to, "yyyy-MM-dd");
+
+    try {
+      const bookingData = {
+        guest_name: newBooking.guest.trim(),
+        check_in: checkInDate,
+        check_out: checkOutDate,
+        status: newBooking.status,
+        total_cost: Number(newBooking.total),
+        notes: `room:${newBooking.room.trim()}`,
+      };
+
+      if (editingBooking.dbId) {
+        await api.updateBooking(editingBooking.dbId, bookingData);
+      }
+
+      const updated: Booking = {
+        ...editingBooking,
+        guest: newBooking.guest.trim(),
+        room: newBooking.room.trim(),
+        checkIn: checkInDate,
+        checkOut: checkOutDate,
+        total: Number(newBooking.total),
+        status: newBooking.status,
+      };
+
+      setBookings((prev) => prev.map(b => b.id === editingBooking.id ? updated : b));
+
+      toast({
+        title: "Booking updated",
+        description: `Booking ${editingBooking.id} has been updated successfully.`,
+      });
+
+      setEditOpen(false);
+      setEditingBooking(null);
+      setDateRange(undefined);
+      setNewBooking({
+        guest: "",
+        room: "",
+        total: "",
+        status: "Confirmed",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Failed to update booking",
+        description: error.message || "Could not update booking",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleDeleteBooking = async (booking: Booking) => {
+    if (!confirm(`Are you sure you want to delete booking ${booking.id}?`)) {
+      return;
+    }
+
+    try {
+      if (booking.dbId) {
+        await api.deleteBooking(booking.dbId);
+      }
+
+      setBookings((prev) => prev.filter(b => b.id !== booking.id));
+
+      toast({
+        title: "Booking deleted",
+        description: `Booking ${booking.id} has been deleted successfully.`,
+      });
+    } catch (error: any) {
+      toast({
+        title: "Failed to delete booking",
+        description: error.message || "Could not delete booking",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const openEditDialog = (booking: Booking) => {
+    setEditingBooking(booking);
+    setNewBooking({
+      guest: booking.guest,
+      room: booking.room,
+      total: String(booking.total),
+      status: booking.status,
+    });
+    setDateRange({
+      from: new Date(booking.checkIn),
+      to: new Date(booking.checkOut),
+    });
+    setEditOpen(true);
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -531,6 +629,83 @@ const Bookings = () => {
             </form>
           </DialogContent>
         </Dialog>
+
+        {/* Edit Booking Dialog */}
+        <Dialog open={editOpen} onOpenChange={setEditOpen}>
+          <DialogContent className="sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle>Edit Booking</DialogTitle>
+            </DialogHeader>
+
+            <form onSubmit={handleEditBooking} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="edit-guest">Guest Name</Label>
+                <Input
+                  id="edit-guest"
+                  placeholder="Guest name"
+                  value={newBooking.guest}
+                  onChange={(e) => setNewBooking((prev) => ({ ...prev, guest: e.target.value }))}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="edit-room">Room</Label>
+                <Input
+                  id="edit-room"
+                  placeholder="e.g. Suite 401"
+                  value={newBooking.room}
+                  onChange={(e) => setNewBooking((prev) => ({ ...prev, room: e.target.value }))}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Check-in & Check-out Dates</Label>
+                <DateRangePicker selected={dateRange} onSelect={setDateRange} />
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-total">Total Amount (₹)</Label>
+                  <Input
+                    id="edit-total"
+                    inputMode="decimal"
+                    placeholder="0"
+                    value={newBooking.total}
+                    onChange={(e) => setNewBooking((prev) => ({ ...prev, total: e.target.value }))}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Status</Label>
+                  <Select
+                    value={newBooking.status}
+                    onValueChange={(value) => setNewBooking((prev) => ({ ...prev, status: value as BookingStatus }))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Confirmed">Confirmed</SelectItem>
+                      <SelectItem value="Pending">Pending</SelectItem>
+                      <SelectItem value="Checked In">Checked In</SelectItem>
+                      <SelectItem value="Checked Out">Checked Out</SelectItem>
+                      <SelectItem value="Cancelled">Cancelled</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setEditOpen(false)}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={!canSubmitNewBooking}>
+                  Update Booking
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
       </div>
 
       <div className="relative max-w-xs">
@@ -583,6 +758,17 @@ const Bookings = () => {
                             Check out
                           </Button>
                         )}
+                        <Button size="sm" variant="ghost" onClick={() => openEditDialog(b)}>
+                          <Pencil className="h-3 w-3" />
+                        </Button>
+                        <Button 
+                          size="sm" 
+                          variant="ghost" 
+                          className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                          onClick={() => handleDeleteBooking(b)}
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
                       </div>
                     </td>
                   </tr>

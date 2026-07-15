@@ -19,7 +19,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { BedDouble, Search, Plus } from "lucide-react";
+import { BedDouble, Search, Plus, Pencil, Trash2 } from "lucide-react";
 import { formatINR } from "@/lib/currency";
 import { toast } from "@/components/ui/use-toast";
 import api from "@/lib/api";
@@ -92,6 +92,8 @@ const Rooms = () => {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<RoomStatus | "all">("all");
   const [addOpen, setAddOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editingRoom, setEditingRoom] = useState<Room | null>(null);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
   const [newRoomImageFile, setNewRoomImageFile] = useState<File | null>(null);
   const [newRoomImagePreview, setNewRoomImagePreview] = useState<string | null>(null);
@@ -241,6 +243,124 @@ const Rooms = () => {
     }
   };
 
+  const handleEditRoom = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!editingRoom || !canSubmitNewRoom) return;
+
+    setIsUploadingImage(true);
+
+    try {
+      let image_url: string | undefined = editingRoom.imageUrl;
+      
+      // Convert image to base64 if new image provided
+      if (newRoomImageFile) {
+        try {
+          image_url = await readFileAsDataUrl(newRoomImageFile);
+        } catch {
+          toast({
+            title: "Image processing failed",
+            description: "Could not process the image. Continuing with existing image.",
+            variant: "destructive",
+          });
+        }
+      }
+
+      const roomData = {
+        number: newRoom.number.trim(),
+        type: newRoom.type.trim(),
+        floor: Number(newRoom.floor),
+        status: newRoom.status,
+        price: Number(newRoom.price),
+        guest: newRoom.status === "occupied" ? newRoom.guest.trim() || null : null,
+        image_url,
+      };
+
+      const { room } = await api.updateRoom(editingRoom.id, roomData);
+      
+      const mappedRoom = {
+        ...room,
+        imageUrl: room.image_url,
+      };
+      
+      setRooms((prev) => prev.map(r => r.id === editingRoom.id ? mappedRoom : r));
+      
+      toast({
+        title: "Room updated",
+        description: `Room ${room.number} has been updated successfully.`,
+      });
+
+      logAction({
+        module: "rooms",
+        action: "room_updated",
+        details: `Room ${room.number} (${room.type}) updated on floor ${room.floor}.`,
+      });
+
+      setEditOpen(false);
+      setEditingRoom(null);
+      setNewRoomImageFile(null);
+      setNewRoomImagePreview(null);
+      setNewRoom({
+        number: "",
+        type: "Standard",
+        floor: "1",
+        status: "available",
+        price: "120",
+        guest: "",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Failed to update room",
+        description: error.message || "Could not update room",
+        variant: "destructive",
+      });
+    } finally {
+      setIsUploadingImage(false);
+    }
+  };
+
+  const handleDeleteRoom = async (room: Room) => {
+    if (!confirm(`Are you sure you want to delete Room ${room.number}?`)) {
+      return;
+    }
+
+    try {
+      await api.deleteRoom(room.id);
+      
+      setRooms((prev) => prev.filter(r => r.id !== room.id));
+      
+      toast({
+        title: "Room deleted",
+        description: `Room ${room.number} has been deleted successfully.`,
+      });
+
+      logAction({
+        module: "rooms",
+        action: "room_deleted",
+        details: `Room ${room.number} (${room.type}) deleted.`,
+      });
+    } catch (error: any) {
+      toast({
+        title: "Failed to delete room",
+        description: error.message || "Could not delete room",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const openEditDialog = (room: Room) => {
+    setEditingRoom(room);
+    setNewRoom({
+      number: room.number,
+      type: room.type,
+      floor: String(room.floor),
+      status: room.status,
+      price: String(room.price),
+      guest: room.guest || "",
+    });
+    setNewRoomImagePreview(room.imageUrl || null);
+    setEditOpen(true);
+  };
+
   const counts = rooms.reduce(
     (acc, room) => {
       acc.total += 1;
@@ -386,6 +506,121 @@ const Rooms = () => {
             </form>
           </DialogContent>
         </Dialog>
+
+        {/* Edit Room Dialog */}
+        <Dialog open={editOpen} onOpenChange={setEditOpen}>
+          <DialogContent className="sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle>Edit Room</DialogTitle>
+            </DialogHeader>
+
+            <form onSubmit={handleEditRoom} className="space-y-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-room-number">Room Number</Label>
+                  <Input
+                    id="edit-room-number"
+                    placeholder="e.g. 405"
+                    value={newRoom.number}
+                    onChange={(e) => setNewRoom((prev) => ({ ...prev, number: e.target.value }))}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Type</Label>
+                  <Select value={newRoom.type} onValueChange={(value) => setNewRoom((prev) => ({ ...prev, type: value }))}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Standard">Standard</SelectItem>
+                      <SelectItem value="Deluxe">Deluxe</SelectItem>
+                      <SelectItem value="Suite">Suite</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-room-floor">Floor</Label>
+                  <Input
+                    id="edit-room-floor"
+                    inputMode="numeric"
+                    value={newRoom.floor}
+                    onChange={(e) => setNewRoom((prev) => ({ ...prev, floor: e.target.value }))}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Status</Label>
+                  <Select
+                    value={newRoom.status}
+                    onValueChange={(value) => setNewRoom((prev) => ({ ...prev, status: value as RoomStatus }))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="available">Available</SelectItem>
+                      <SelectItem value="occupied">Occupied</SelectItem>
+                      <SelectItem value="maintenance">Maintenance</SelectItem>
+                      <SelectItem value="cleaning">Cleaning</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="edit-room-price">Rate (per night)</Label>
+                  <Input
+                    id="edit-room-price"
+                    inputMode="decimal"
+                    value={newRoom.price}
+                    onChange={(e) => setNewRoom((prev) => ({ ...prev, price: e.target.value }))}
+                  />
+                </div>
+              </div>
+
+              {newRoom.status === "occupied" && (
+                <div className="space-y-2">
+                  <Label htmlFor="edit-room-guest">Guest (optional)</Label>
+                  <Input
+                    id="edit-room-guest"
+                    placeholder="Guest name"
+                    value={newRoom.guest}
+                    onChange={(e) => setNewRoom((prev) => ({ ...prev, guest: e.target.value }))}
+                  />
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <Label htmlFor="edit-room-image">Room Image (optional)</Label>
+                <Input
+                  id="edit-room-image"
+                  type="file"
+                  accept="image/*"
+                  onChange={handleSelectRoomImage}
+                />
+                {newRoomImagePreview && (
+                  <img
+                    src={newRoomImagePreview}
+                    alt="Room preview"
+                    className="h-28 w-full rounded-md object-cover border"
+                  />
+                )}
+              </div>
+
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setEditOpen(false)}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={!canSubmitNewRoom || isUploadingImage}>
+                  {isUploadingImage ? "Updating..." : "Update Room"}
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
       </div>
 
       {/* Summary */}
@@ -487,6 +722,27 @@ const Rooms = () => {
                       <span className="font-medium text-foreground">{room.guest}</span>
                     </div>
                   )}
+                </div>
+                {/* Action Buttons */}
+                <div className="mt-4 flex gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="flex-1"
+                    onClick={() => openEditDialog(room)}
+                  >
+                    <Pencil className="h-3 w-3 mr-1" />
+                    Edit
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="flex-1 text-destructive hover:bg-destructive hover:text-destructive-foreground"
+                    onClick={() => handleDeleteRoom(room)}
+                  >
+                    <Trash2 className="h-3 w-3 mr-1" />
+                    Delete
+                  </Button>
                 </div>
               </CardContent>
             </Card>

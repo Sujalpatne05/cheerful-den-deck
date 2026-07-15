@@ -20,7 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Search, Plus, Mail, Phone } from "lucide-react";
+import { Search, Plus, Mail, Phone, Pencil, Trash2 } from "lucide-react";
 
 type GuestStatus = "Checked In" | "Upcoming" | "Checked Out" | "VIP";
 
@@ -54,6 +54,8 @@ const Guests = () => {
   const [guests, setGuests] = useAppState<Guest[]>("rm_guests", initialGuests);
   const [search, setSearch] = useState("");
   const [addOpen, setAddOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editingGuest, setEditingGuest] = useState<Guest | null>(null);
   const [newGuest, setNewGuest] = useState<{
     name: string;
     email: string;
@@ -120,6 +122,54 @@ const Guests = () => {
       status: "Upcoming",
       lastVisit: "",
     });
+  };
+
+  const handleEditGuest = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!editingGuest || !canSubmitNewGuest) return;
+
+    const updated: Guest = {
+      id: editingGuest.id,
+      name: newGuest.name.trim(),
+      email: newGuest.email.trim(),
+      phone: newGuest.phone.trim(),
+      visits: Number(newGuest.visits),
+      status: newGuest.status,
+      lastVisit: newGuest.lastVisit || editingGuest.lastVisit,
+    };
+
+    setGuests((prev) => prev.map(g => g.id === editingGuest.id ? updated : g));
+    setEditOpen(false);
+    setEditingGuest(null);
+    setNewGuest({
+      name: "",
+      email: "",
+      phone: "",
+      visits: "0",
+      status: "Upcoming",
+      lastVisit: "",
+    });
+  };
+
+  const handleDeleteGuest = (guest: Guest) => {
+    if (!confirm(`Are you sure you want to delete ${guest.name}?`)) {
+      return;
+    }
+
+    setGuests((prev) => prev.filter(g => g.id !== guest.id));
+  };
+
+  const openEditDialog = (guest: Guest) => {
+    setEditingGuest(guest);
+    setNewGuest({
+      name: guest.name,
+      email: guest.email,
+      phone: guest.phone,
+      visits: String(guest.visits),
+      status: guest.status,
+      lastVisit: guest.lastVisit,
+    });
+    setEditOpen(true);
   };
 
   return (
@@ -224,6 +274,98 @@ const Guests = () => {
             </form>
           </DialogContent>
         </Dialog>
+
+        {/* Edit Guest Dialog */}
+        <Dialog open={editOpen} onOpenChange={setEditOpen}>
+          <DialogContent className="sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle>Edit Guest</DialogTitle>
+            </DialogHeader>
+
+            <form onSubmit={handleEditGuest} className="space-y-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-guest-name">Name</Label>
+                  <Input
+                    id="edit-guest-name"
+                    placeholder="Full name"
+                    value={newGuest.name}
+                    onChange={(e) => setNewGuest((prev) => ({ ...prev, name: e.target.value }))}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Status</Label>
+                  <Select
+                    value={newGuest.status}
+                    onValueChange={(value) => setNewGuest((prev) => ({ ...prev, status: value as GuestStatus }))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Checked In">Checked In</SelectItem>
+                      <SelectItem value="Upcoming">Upcoming</SelectItem>
+                      <SelectItem value="Checked Out">Checked Out</SelectItem>
+                      <SelectItem value="VIP">VIP</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-guest-email">Email</Label>
+                  <Input
+                    id="edit-guest-email"
+                    type="email"
+                    placeholder="name@email.com"
+                    value={newGuest.email}
+                    onChange={(e) => setNewGuest((prev) => ({ ...prev, email: e.target.value }))}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-guest-phone">Phone</Label>
+                  <Input
+                    id="edit-guest-phone"
+                    placeholder="+1 555-0101"
+                    value={newGuest.phone}
+                    onChange={(e) => setNewGuest((prev) => ({ ...prev, phone: e.target.value }))}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-guest-visits">Visits</Label>
+                  <Input
+                    id="edit-guest-visits"
+                    inputMode="numeric"
+                    value={newGuest.visits}
+                    onChange={(e) => setNewGuest((prev) => ({ ...prev, visits: e.target.value }))}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-guest-lastvisit">Last Visit</Label>
+                  <Input
+                    id="edit-guest-lastvisit"
+                    type="date"
+                    value={newGuest.lastVisit}
+                    onChange={(e) => setNewGuest((prev) => ({ ...prev, lastVisit: e.target.value }))}
+                  />
+                </div>
+              </div>
+
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setEditOpen(false)}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={!canSubmitNewGuest}>
+                  Update Guest
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
       </div>
 
       <div className="relative max-w-xs">
@@ -261,6 +403,27 @@ const Guests = () => {
               <div className="space-y-2 text-sm text-muted-foreground">
                 <div className="flex items-center gap-2"><Mail className="h-3.5 w-3.5" />{g.email}</div>
                 <div className="flex items-center gap-2"><Phone className="h-3.5 w-3.5" />{g.phone}</div>
+              </div>
+              {/* Action Buttons */}
+              <div className="mt-4 flex gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => openEditDialog(g)}
+                >
+                  <Pencil className="h-3 w-3 mr-1" />
+                  Edit
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="flex-1 text-destructive hover:bg-destructive hover:text-destructive-foreground"
+                  onClick={() => handleDeleteGuest(g)}
+                >
+                  <Trash2 className="h-3 w-3 mr-1" />
+                  Delete
+                </Button>
               </div>
             </CardContent>
           </Card>
